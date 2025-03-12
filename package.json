@@ -1,0 +1,22 @@
+{
+  "name": "koishi-plugin-memorytable",
+  "description": "为其他bot插件提供记忆表格功能，可以存储用户的聊天记录和并可通过大模型分析总结出重要数据。",
+  "version": "0.0.1",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "dist"
+  ],
+  "license": "MIT",
+  "scripts": {},
+  "keywords": [
+    "chatbot",
+    "koishi",
+    "plugin"
+  ],
+  "devDependencies": {},
+  "peerDependencies": {
+    "koishi": "^4.18.7"
+  }
+}
