@@ -21,14 +21,16 @@
     "memory"
   ],
   "peerDependencies": {
-    "koishi": "^4.13.0"
+    "koishi": "^4.18.7"
   },
   "koishi": {
     "description": {
       "zh": "为其他bot插件提供记忆表格功能"
     },
     "service": {
-      "required": ["database"]
+      "required": [
+        "database"
+      ]
     }
   }
 }
