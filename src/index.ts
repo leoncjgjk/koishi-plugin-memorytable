@@ -127,11 +127,72 @@ export class MemoryTableService extends Service {
 		})
 
 		// 注册指令
-		ctx.command('mem.trait',{ authority: 2 })
-			.userFields(['authority'])
-			.action(async ({ session }) => {
-				const { guildId, channelId, userId } = session
-				const groupId = guildId || channelId || '0'
+		ctx.command('mem.setTrait <trait:string> [groupid:string] [userid:string]',{ authority: 2 })
+      .userFields(['authority'])
+      .action(async ({ session }, trait, groupid, userid) => {
+        const groupId = String(groupid || session.guildId || session.channelId || '0')
+        const userId = String(userid || session.userId)
+
+        try {
+          // 解析trait字符串为对象
+          const traitLines = trait.split('\n')
+          const traitObject = {}
+
+          for (const line of traitLines) {
+            const [key, value] = line.split(': ')
+            if (key && value) {
+              traitObject[key.trim()] = value.trim()
+            }
+          }
+
+          // 获取或创建记忆表
+          let memoryEntry = await this.ctx.database.get('memory_table', {
+            group_id: groupId,
+            user_id: userId
+          }).then(entries => entries[0])
+
+          if (!memoryEntry) {
+            memoryEntry = {
+              group_id: groupId,
+              user_id: userId,
+              trait: {},
+              memory_st: [],
+              memory_lt: [],
+              history: []
+            }
+          }
+
+          // 更新特征
+          memoryEntry.trait = traitObject
+
+          // 保存到数据库
+          await this.ctx.database.upsert('memory_table', [memoryEntry])
+
+          const responseElements = Object.entries(traitObject).map(([key, value]) => {
+            return h('message', [
+              h('author', {}, key),
+              h('content', {}, String(value))
+            ])
+          })
+
+          if(this.config.debugMode){
+            return h('figure', { children: responseElements })
+          }else{
+            ctx.logger.info('figure', { children: responseElements })
+            return '特征设置成功'
+          }
+
+        } catch (error) {
+          this.ctx.logger.error(`设置特征失败: ${error.message}`)
+          return '设置特征失败，请检查输入格式是否正确'
+        }
+      })
+
+		ctx.command('mem.trait [groupid:string] [userid:string]',{ authority: 2 })
+      .userFields(['authority'])
+      .action(async ({ session }, groupid, userid) => {
+        const groupId = String(groupid || session.guildId || session.channelId || '0')
+        const userId = String(userid || session.userId)
 
 				try {
 					const trait = await generateTrait.call(this, userId, groupId,session)
@@ -147,8 +208,8 @@ export class MemoryTableService extends Service {
           if(this.config.debugMode){
             return h('figure', { children: responseElements })
           }else{
-            ctx.logger.info('figure', { children: responseElements })
-            return ''
+            ctx.logger.info('figure responseElements:', JSON.stringify(responseElements, null, 2))
+            return '特征设置成功'
           }
 
 				} catch (error) {
@@ -157,11 +218,11 @@ export class MemoryTableService extends Service {
 				}
 			})
 
-		ctx.command('mem.mem',{ authority: 2 })
-			.userFields(['authority'])
-			.action(async ({ session }) => {
-				const { guildId, channelId, userId } = session
-				const groupId = guildId || channelId || '0'
+		ctx.command('mem.mem [groupid:string] [userid:string]',{ authority: 2 })
+      .userFields(['authority'])
+      .action(async ({ session }, groupid, userid) => {
+        const groupId = String(groupid || session.guildId || session.channelId || '0')
+        const userId = String(userid || session.userId)
 
 				const memoryEntry = await this.ctx.database.get('memory_table', {
 					group_id: groupId,
@@ -207,11 +268,11 @@ export class MemoryTableService extends Service {
 				return h('figure', { children: responseElements })
 			})
 
-		ctx.command('mem.history',{ authority: 2 })
-			.userFields(['authority'])
-			.action(async ({ session }) => {
-				const { guildId, channelId, userId } = session
-				const groupId = guildId || channelId || '0'
+      ctx.command('mem.history [groupid:string] [userid:string]',{ authority: 2 })
+      .userFields(['authority'])
+      .action(async ({ session }, groupid, userid) => {
+        const groupId = String(groupid || session.guildId || session.channelId || '0')
+        const userId = String(userid || session.userId)
 
 				// 获取历史记录
 				const memoryEntry = await this.ctx.database.get('memory_table', {
