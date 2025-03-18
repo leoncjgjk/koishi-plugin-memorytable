@@ -1,20 +1,27 @@
 # koishi-plugin-memorytable
 
-[![npm](https://img.shields.io/npm/v/koishi-plugin-memorytable?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-memorytable)
-
-为其他bot插件提供记忆表格功能，可以存储用户的聊天记录和并可通过大模型分析总结出重要数据。
+一个为Koishi机器人提供记忆表格功能的插件。通过该插件，机器人可以记录与用户的聊天历史，并生成用户特征和记忆信息。
 
 ## 功能特点
 
-- 自动记录用户的聊天内容
-- 提供API接口供其他插件获取用户的聊天记录和记忆数据
-- 支持配置每个用户的最大消息存储数量
-- 支持设置下次更新记忆的时间
-- 按照模板格式存储用户数据
+- 记录用户聊天历史
+- 生成用户特征（性别、称呼、印象、好感度等）
+- 支持短期记忆和长期记忆
+- 提供API接口供其他插件调用
+- 支持群聊和私聊场景
+- 支持记忆数据的备份和恢复
 
-## 配置项
-
-- `maxMessages`: 每个用户存储的最大消息数量，默认为100条
+## 指令说明
+### mem.trait
+查看当前用户的特征信息，包括性别、称呼、印象和好感度等。当聊天消息数达到配置的refreshTraitMesNumber时，会自动更新用户特征。
+### mem.mem
+查看当前用户的记忆信息，包括特征、短期记忆和长期记忆。
+### mem.history
+查看与当前用户的聊天历史记录。
+### mem.backup
+手动创建一个记忆数据的备份。
+### mem.restore
+从指定的备份文件恢复记忆数据。
 
 ## 服务API
 
@@ -25,124 +32,38 @@ declare module 'koishi' {
   interface Context {
     memorytable: MemoryTableService
   }
+
+  interface MemoryTableService {
+    getMemory(userId: string, platform: string, groupId?: string): Promise<MemoryTableEntry>
+    updateMemory(userId: string, platform: string, groupId: string, memory: Partial<MemoryTableEntry>): Promise<void>
+    clearMemory(userId: string, platform: string, groupId?: string): Promise<void>
+  }
 }
 ```
 
-### API方法
-
-#### getUserMemory
-
-获取用户的记忆表数据。
+### 使用示例
 
 ```typescript
-async getUserMemory(userId: string, platform: string): Promise<MemoryTableEntry | null>
-```
+export class YourPlugin {
+  constructor(ctx: Context, private database: Context['database']) {
+    // 获取用户记忆信息
+    ctx.middleware(async (session, next) => {
+      const { userId, platform } = session
+      const groupId = session.guildId || '0' // 私聊时groupId为'0'
 
-#### updateUserMemory
+      // 使用服务API获取记忆信息
+      const memory = await ctx.memorytable.getMemory(userId, platform, groupId)
 
-更新用户的记忆数据。
+      if (memory) {
+        // 使用记忆信息
+        console.log('用户特征:', memory.trait)
+        console.log('短期记忆:', memory.memory_st)
+        console.log('长期记忆:', memory.memory_lt)
+        // 处理你的业务逻辑
+      }
 
-```typescript
-async updateUserMemory(userId: string, platform: string, memory: Record<string, any>): Promise<void>
-```
-
-#### addChatHistory
-
-添加一条聊天记录到用户历史记录中。
-
-```typescript
-async addChatHistory(userId: string, platform: string, message: string): Promise<void>
-```
-
-#### getChatHistory
-
-获取用户的聊天历史记录。
-
-```typescript
-async getChatHistory(userId: string, platform: string): Promise<string[]>
-```
-
-#### setNextUpdate
-
-设置用户记忆的下次更新时间。
-
-```typescript
-async setNextUpdate(userId: string, platform: string, nextUpdate: number): Promise<void>
-```
-
-#### clearUserData
-
-清除用户的所有记录（包括记忆和聊天历史）。
-
-```typescript
-async clearUserData(userId: string, platform: string): Promise<void>
-```
-
-## 数据结构
-
-### MemoryTableEntry
-
-```typescript
-interface MemoryTableEntry {
-  id: number
-  user_id: string
-  platform: string
-  next_update: number
-  memory: Record<string, any>
-  history: string[]
-  created_at: Date
-  updated_at: Date
-}
-```
-
-## 使用示例
-
-```typescript
-import { Context } from 'koishi'
-
-export function apply(ctx: Context) {
-  // 获取用户的聊天历史
-  ctx.command('chat-history')
-    .action(async ({ session }) => {
-      const history = await ctx.memorytable.getChatHistory(session.userId, session.platform)
-      return history.join('\n')
+      return next()
     })
-
-  // 获取用户的记忆数据
-  ctx.command('memory')
-    .action(async ({ session }) => {
-      const entry = await ctx.memorytable.getUserMemory(session.userId, session.platform)
-      if (!entry) return '没有记忆数据'
-      return JSON.stringify(entry.memory, null, 2)
-    })
-
-  // 清除用户的所有数据
-  ctx.command('clear-memory')
-    .action(async ({ session }) => {
-      await ctx.memorytable.clearUserData(session.userId, session.platform)
-      return '已清除所有记忆和聊天记录'
-    })
-}
-```
-
-## 数据存储格式
-
-插件按照以下格式存储用户数据：
-
-```json
-{
-  "[用户ID]": {
-    "nextUpdate": 5,
-    "memory": {
-      "ta的性别（男/女）": "男",
-      "你对ta的称呼（<10个字）": "哥哥",
-      "你对ta的印象（<15个字）": "我最亲爱的哥哥，对我非常好，可以信赖",
-      "你对ta的好感（-100~100）": 100
-    },
-    "history": [
-      "用户名:消息内容",
-      "机器人名:回复内容"
-    ]
   }
 }
 ```
