@@ -11,6 +11,7 @@ export interface Config {
   apiKey?: string
   model?: string
   memoryLtWordsLimit?: number
+  traitMesNumberFT?: number
   traitMesNumber?: number
   traitTemplate?: Record<string, string>
   botMesReport?: boolean
@@ -33,9 +34,12 @@ export const Config = Schema.object({
   memoryLtWordsLimit: Schema.number()
     .default(300)
     .description('长期记忆字数上限'),
+  traitMesNumberFT: Schema.number()
+    .default(6)
+    .description('更新特征读取的消息数量(第一次创建时)'),
   traitMesNumber: Schema.number()
     .default(10)
-    .description('更新特征读取的消息数量'),
+    .description('更新特征读取的消息数量（后续更新）'),
   traitTemplate: Schema.dict(Schema.string())
     .description('特征模板，键为特征项，值为提示词')
     .default({
@@ -357,7 +361,7 @@ export class MemoryTableService extends Service {
           await this.handleMessage(session)
         }
       }
-      this.ctx.logger.info('message',session)
+      // this.ctx.logger.info('message',session)
       await this.autoUpdateTrait(session.userId,session.guildId || session.channelId || '0',session)
 		})
 
@@ -371,12 +375,12 @@ export class MemoryTableService extends Service {
 	}
   	// 处理oob回传机器人消息
 	private async handleMessageBotOob(session: Session, content: string , authID:string) {
-    this.ctx.logger.info('处理oob回传机器人消息',session)
+    // this.ctx.logger.info('处理oob回传机器人消息',session)
     // 获取目标用户ID
     let targetUserId = authID
     let targetGroupId = session.guildId || session.channelId || '0'
 
-    this.ctx.logger.info('前this.messageQueue.length：',this.messageQueue.length)
+    // this.ctx.logger.info('前this.messageQueue.length：',this.messageQueue.length)
 
       // 构建消息记录
       const messageEntry: MessageEntry = {
@@ -417,7 +421,7 @@ export class MemoryTableService extends Service {
       if (matchIndex !== -1) {
         this.messageQueue.splice(matchIndex, 1)
       }
-      this.ctx.logger.info('后this.messageQueue.length：',this.messageQueue.length)
+      // this.ctx.logger.info('后this.messageQueue.length：',this.messageQueue.length)
 
       return
 }
@@ -724,7 +728,8 @@ async function generateTrait(userId: string, groupId: string,session:Session): P
     }
 
     const formattedHistory = recentHistory.map(entry => {
-      return `${entry.sender_name}(${entry.sender_id}): ${entry.content}`
+      const tempContent = entry.content.replace(/@\d+\s*/g, '')
+      return `${entry.sender_name}(${entry.sender_id}): ${tempContent}`
     }).join('\n')
     // this.ctx.logger.info('formattedHistory：',formattedHistory)
     // 为每个特征项生成内容
@@ -764,6 +769,8 @@ ${JSON.stringify(this.config.traitTemplate, null, 2)}` }
       trait,
       history: updatedHistory
     })
+    this.ctx.logger.info('新特征结果：',trait)
+
     } catch (error) {
       this.ctx.logger.warn(`生成特征失败: ${error.message}`)
       for (const key of Object.keys(this.config.traitTemplate)) {
