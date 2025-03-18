@@ -369,6 +369,58 @@ export class MemoryTableService extends Service {
     //   }
     // })
 	}
+  	// 处理oob回传机器人消息
+	private async handleMessageBotOob(session: Session, content: string , authID:string) {
+    this.ctx.logger.info('处理oob回传机器人消息',session)
+    // 获取目标用户ID
+    let targetUserId = authID
+    let targetGroupId = session.guildId || session.channelId || '0'
+
+    this.ctx.logger.info('前this.messageQueue.length：',this.messageQueue.length)
+
+      // 构建消息记录
+      const messageEntry: MessageEntry = {
+        message_id: 're'+session.messageId,
+        content: this.filterMessageContent(content||session.content),
+        sender_id: session.bot.selfId,
+        sender_name: '机器人',
+        timestamp: new Date(),
+        used: false
+      }
+      if(messageEntry.content === '') return
+      // 获取或创建记忆表
+      let memoryEntry = await this.ctx.database.get('memory_table', {
+        group_id: targetGroupId,
+        user_id: targetUserId
+      }).then(entries => entries[0])
+
+      if (!memoryEntry) {
+        memoryEntry = {
+          group_id: targetGroupId,
+          user_id: targetUserId,
+          trait: {},
+          memory_st: [],
+          memory_lt: [],
+          history: []
+        }
+      }
+
+      // 更新历史记录
+      const maxHistory = Math.min(this.config.maxMessages, memoryEntry.history.length + 1)
+      memoryEntry.history = [...memoryEntry.history, messageEntry].slice(-maxHistory)
+      // 保存或更新记忆表
+      await this.ctx.database.upsert('memory_table', [memoryEntry])
+      // 从消息队列中移除匹配的最早记录
+      const matchIndex = this.messageQueue.findIndex(item =>
+        item.userId === targetUserId && item.groupId === targetGroupId
+      )
+      if (matchIndex !== -1) {
+        this.messageQueue.splice(matchIndex, 1)
+      }
+      this.ctx.logger.info('后this.messageQueue.length：',this.messageQueue.length)
+
+      return
+}
 	// 处理机器人消息
 	private async handleMessageBot(session: Session, content?: string) {
 			// 获取目标用户ID
@@ -548,8 +600,12 @@ export class MemoryTableService extends Service {
   }
 
   // 传入机器人消息
-  public async setMemBotMes(session: Session, content?: string) {
-    await this.handleMessageBot(session,content)
+  public async setMemBotMes(session: Session, content: string,authID:string) {
+    if(!this.config.botMesReport){
+      await this.handleMessageBotOob(session,content,authID)
+    }else{
+      this.ctx.logger.info('开了机器人上报无视回传消息')
+    }
   }
 
   // 获取用户记忆信息
