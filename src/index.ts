@@ -130,7 +130,7 @@ export class MemoryTableService extends Service {
 		ctx.command('mem.setTrait <trait:string> [groupid:string] [userid:string]',{ authority: 2 })
       .userFields(['authority'])
       .action(async ({ session }, trait, groupid, userid) => {
-        const groupId = String(groupid || session.guildId || session.channelId || '0')
+        const groupId = String((groupid === '-1' ? undefined : groupid) || session.guildId || session.channelId || '0')
         const userId = String(userid || session.userId)
 
         try {
@@ -191,7 +191,7 @@ export class MemoryTableService extends Service {
 		ctx.command('mem.trait [groupid:string] [userid:string]',{ authority: 2 })
       .userFields(['authority'])
       .action(async ({ session }, groupid, userid) => {
-        const groupId = String(groupid || session.guildId || session.channelId || '0')
+        const groupId = String((groupid === '-1' ? undefined : groupid) || session.guildId || session.channelId || '0')
         const userId = String(userid || session.userId)
 
 				try {
@@ -221,7 +221,7 @@ export class MemoryTableService extends Service {
 		ctx.command('mem.mem [groupid:string] [userid:string]',{ authority: 2 })
       .userFields(['authority'])
       .action(async ({ session }, groupid, userid) => {
-        const groupId = String(groupid || session.guildId || session.channelId || '0')
+        const groupId = String((groupid === '-1' ? undefined : groupid) || session.guildId || session.channelId || '0')
         const userId = String(userid || session.userId)
 
 				const memoryEntry = await this.ctx.database.get('memory_table', {
@@ -268,10 +268,11 @@ export class MemoryTableService extends Service {
 				return h('figure', { children: responseElements })
 			})
 
+      //查看历史记录，目前存在问题，用合并的方式显示，所有发送人的昵称都会显示成机器人的，暂时没想出来怎么解决
       ctx.command('mem.history [groupid:string] [userid:string]',{ authority: 2 })
       .userFields(['authority'])
       .action(async ({ session }, groupid, userid) => {
-        const groupId = String(groupid || session.guildId || session.channelId || '0')
+        const groupId = String((groupid === '-1' ? undefined : groupid) || session.guildId || session.channelId || '0')
         const userId = String(userid || session.userId)
 
 				// 获取历史记录
@@ -285,20 +286,38 @@ export class MemoryTableService extends Service {
 				}
 
 				// 构建消息元素
-				const responseElements = memoryEntry.history.map(entry => {
-					return h('message', [
-						h('author', { id: entry.sender_id }, entry.sender_name),
-						h('content', {}, entry.content.split(' ').flatMap(part => {
-							const atMatch = part.match(/@(\d+)/);
-							return atMatch ? [h('at', { id: atMatch[1] }), ' '] : [part]
-						}))
-					])
-				})
+				const responseElements = memoryEntry.history
+          .filter(entry => entry.content && entry.content.trim() !== '')
+          .map(entry => {
+            const contentElements = [];
+            const parts = entry.content.split(/(@\d+)/);
 
+            for (const part of parts) {
+              const atMatch = part.match(/@(\d+)/);
+              if (atMatch) {
+                contentElements.push(h('at', { id: atMatch[1] }));
+                contentElements.push(h('text', { content: ' ' }));
+              } else if (part.trim()) {
+                contentElements.push(h('text', { content: part.trim() }));
+                contentElements.push(h('text', { content: ' ' }));
+              }
+            }
+
+            if (contentElements.length > 0 &&
+                contentElements[contentElements.length - 1].attrs?.content === ' ') {
+              contentElements.pop();
+            }
+
+            return h('message', [
+              h('author', { id: entry.sender_id }, entry.sender_name),
+              h('content', {}, contentElements)
+            ]);
+          })
 				// 创建figure元素
 				const figureContent = h('figure', {
 					children: responseElements
 				})
+        // this.ctx.logger.info('figureContent:',figureContent)
 
 				// 发送消息
 				return figureContent
@@ -505,7 +524,7 @@ export class MemoryTableService extends Service {
 					targetGroupId = session.guildId || session.channelId || '0'
 				}
 			}
-      this.ctx.logger.info('this.messageQueue.length：',this.messageQueue.length)
+      // this.ctx.logger.info('this.messageQueue.length：',this.messageQueue.length)
 
 			// 如果找到目标用户，直接存储消息
 			if (targetUserId) {
@@ -595,7 +614,7 @@ export class MemoryTableService extends Service {
 			// 私聊消息
 			!session.guildId && !session.channelId
 		)
-    this.ctx.logger.info('是否需要响应消息：',shouldRespond)
+    // this.ctx.logger.info('是否需要响应消息：',shouldRespond)
 		// 如果不需要响应，直接返回
 		if (!shouldRespond) return
 
