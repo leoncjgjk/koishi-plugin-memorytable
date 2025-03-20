@@ -246,8 +246,7 @@ export class MemoryTableService extends Service {
         // 获取群成员信息并构建排名消息
         const rankMessages = await Promise.all(rankings.map(async (rank, index) => {
           const member = await session.bot.getGuildMember?.(session.guildId, rank.userId)
-
-          const nickname = member?.user?.name || rank.userId
+          const nickname = member.nick || member?.user?.name || rank.userId
 
           return `${index + 1}. ${nickname} 好感度：${rank.like}`
         }))
@@ -300,7 +299,7 @@ export class MemoryTableService extends Service {
       const rankMessages = await Promise.all(rankings.map(async (rank, index) => {
         const member = await session.bot.getGuildMember?.(session.guildId, rank.userId)
 
-        const nickname = member?.user?.name || rank.userId
+        const nickname = member.nick || member?.user?.name || rank.userId
 
         return `${index + 1}. ${nickname} 好感度：${rank.like}`
       }))
