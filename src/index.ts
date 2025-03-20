@@ -43,8 +43,8 @@ export const Config = Schema.object({
   traitTemplate: Schema.dict(Schema.string())
     .description('特征模板，键为特征项，值为提示词')
     .default({
-      '性别': '只允许填：未知/男/女',
       '称呼': '机器人应该如何称呼用户？',
+      '性别': '只允许填：未知/男/女',
       '印象': '总结一下机器人对用户的印象和看法,用形容词，不超过20个字',
       '好感度': '用-100到100的数字表示机器人对用户的好感度',
       '事件':'总结一下机器人和用户之间发生过的印象深刻的事情，不超过50个字'
@@ -219,25 +219,21 @@ export class MemoryTableService extends Service {
 				}
 			})
 
-    ctx.command('mem.likeRank [groupid:number]')
+    ctx.command('mem.likeRank [maxnumber:number] [groupid:number]')
       .alias('好感排名')
-      .action(async ({ session }, groupid) => {
+      .action(async ({ session },maxnumber, groupid) => {
         const groupId = String(groupid ? groupid : session.guildId || session.channelId || '0')
 
         // 获取当前群组的所有用户记录
         const memoryEntries = await this.ctx.database.get('memory_table', {
           group_id: groupId
         })
-
         // 过滤并排序用户好感度
-        const rankings = memoryEntries
-          .filter(entry => entry.trait && entry.trait['好感度'] && !isNaN(Number(entry.trait['好感度'])))
-          .map(entry => ({
-            userId: entry.user_id,
-            like: Number(entry.trait['好感度'])
-          }))
+        let rankings = await getLikeRankings(memoryEntries)
+        rankings = rankings
+          .filter(rank => rank.like >= 0)
           .sort((a, b) => b.like - a.like)
-          .slice(0, 10)
+          .slice(0, maxnumber >= 5 && maxnumber <= 50 ? maxnumber : 10)
 
         if (rankings.length === 0) {
           return '当前群组还没有好感度记录~'
@@ -265,15 +261,29 @@ export class MemoryTableService extends Service {
           user_id: userId
 			}).then(entries => entries[0])
 
-			if (!memoryEntry || !memoryEntry.trait || !memoryEntry.trait['好感度']) {
+			if (!memoryEntry || !memoryEntry.trait) {
 				return `<at id="${userId}"/> 我们还不熟呢~`
 			}
-			return `<at id="${userId}"/> 当前好感度：${memoryEntry.trait['好感度']}`
+
+			// 查找所有包含"好感"的特征键
+			const likeKeys = Object.keys(memoryEntry.trait).filter(key => key.includes('好感'))
+			if (likeKeys.length === 0) {
+				return `<at id="${userId}"/> 我们还不熟呢~`
+			}
+
+			// 使用第一个找到的好感值
+			const likeKey = likeKeys[0]
+			const likeValue = Number(memoryEntry.trait[likeKey])
+			if (isNaN(likeValue)) {
+				return `<at id="${userId}"/> 好感度为:${likeValue}`
+			}
+
+			return `<at id="${userId}"/> 当前好感度：${likeValue}`
 		})
 
-    ctx.command('mem.dislikeRank [groupid:number]')
+    ctx.command('mem.dislikeRank [maxnumber:number] [groupid:number]')
     .alias('差评排名')
-    .action(async ({ session }, groupid) => {
+    .action(async ({ session },maxnumber, groupid) => {
       const groupId = String(groupid ? groupid : session.guildId || session.channelId || '0')
 
       // 获取当前群组的所有用户记录
@@ -281,15 +291,12 @@ export class MemoryTableService extends Service {
         group_id: groupId
       })
 
-      // 过滤负好感度用户并按照好感度从低到高排序
-      const rankings = memoryEntries
-        .filter(entry => entry.trait && entry.trait['好感度'] && !isNaN(Number(entry.trait['好感度'])) && Number(entry.trait['好感度']) < 0)
-        .map(entry => ({
-          userId: entry.user_id,
-          like: Number(entry.trait['好感度'])
-        }))
+      let rankings = await getLikeRankings(memoryEntries)
+
+      rankings = rankings
+        .filter(rank => rank.like < 0)
         .sort((a, b) => a.like - b.like)
-        .slice(0, 10)
+        .slice(0, maxnumber >= 5 && maxnumber <= 50 ? maxnumber : 10)
 
       if (rankings.length === 0) {
         return '当前群组还没有差评记录~'
@@ -504,7 +511,7 @@ export class MemoryTableService extends Service {
         }
       })
 
-    // 添加新的指令 'mem say'
+    //  测试指令
     ctx.command('mem.say <content:text>',{ authority: 2 })
 			.userFields(['authority'])
       .action(async ({ session }, content) => {
@@ -517,6 +524,19 @@ export class MemoryTableService extends Service {
         // 复述用户的内容
         session.send(content)
       })
+
+    // 测试指令
+    ctx.command('mem.test',{ authority: 2 })
+    .action(async ({ session }, content) => {
+      if (!content) {
+        return '请输入要复述的内容。'
+      }
+      // 设置消息内容
+      session.content = content
+      session.elements = [h('text', { content }, [content])]
+      // 复述用户的内容
+      session.send(content)
+    })
 
 		// 监听消息
 		ctx.on('message', async (session: Session) => {
@@ -953,6 +973,31 @@ ${JSON.stringify(this.config.traitTemplate, null, 2)}` }
     this.ctx.logger.error(`生成用户特征失败: ${error.message}`)
     return {}
   }
+}
+  // 获取群聊好感度排名数据
+async function getLikeRankings(memoryEntries) {
+  // 获取当前群组的所有用户记录
+  return memoryEntries
+        .filter(entry => {
+          // 检查是否有trait对象
+          if (!entry.trait) return false
+
+          // 查找所有包含"好感"的特征键
+          const likeKeys = Object.keys(entry.trait).filter(key => key.includes('好感'))
+          if (likeKeys.length === 0) return false
+
+          // 使用第一个找到的好感值
+          const likeValue = Number(entry.trait[likeKeys[0]])
+          return !isNaN(likeValue)
+        })
+        .map(entry => {
+          // 获取第一个包含"好感"的特征值
+          const likeKey = Object.keys(entry.trait).find(key => key.includes('好感'))
+          return {
+            userId: entry.user_id,
+            like: Number(entry.trait[likeKey])
+          }
+        })
 }
 
 // 导出插件
