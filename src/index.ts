@@ -127,10 +127,10 @@ export class MemoryTableService extends Service {
 		})
 
 		// 注册指令
-		ctx.command('mem.setTrait <trait:string> [groupid:string] [userid:string]',{ authority: 2 })
+		ctx.command('mem.setTrait <trait:string> [groupid:number] [userid:number]',{ authority: 2 })
       .userFields(['authority'])
-      .action(async ({ session }, trait, groupid, userid) => {
-        const groupId = String((groupid === '-1' ? undefined : groupid) || session.guildId || session.channelId || '0')
+      .action(async ({ session },trait, groupid, userid) => {
+        const groupId = String(groupid === -1 || !groupid ? session.guildId || session.channelId || '0' : groupid)
         const userId = String(userid || session.userId)
 
         try {
@@ -188,10 +188,10 @@ export class MemoryTableService extends Service {
         }
       })
 
-		ctx.command('mem.trait [groupid:string] [userid:string]',{ authority: 2 })
+		ctx.command('mem.trait [groupid:number] [userid:number]',{ authority: 2 })
       .userFields(['authority'])
       .action(async ({ session }, groupid, userid) => {
-        const groupId = String((groupid === '-1' ? undefined : groupid) || session.guildId || session.channelId || '0')
+        const groupId = String(groupid === -1 || !groupid ? session.guildId || session.channelId || '0' : groupid)
         const userId = String(userid || session.userId)
 
 				try {
@@ -218,10 +218,99 @@ export class MemoryTableService extends Service {
 				}
 			})
 
-		ctx.command('mem.mem [groupid:string] [userid:string]',{ authority: 2 })
+    ctx.command('mem.likeRank [groupid:number]')
+      .alias('好感排名')
+      .action(async ({ session }, groupid) => {
+        const groupId = String(groupid ? groupid : session.guildId || session.channelId || '0')
+
+        // 获取当前群组的所有用户记录
+        const memoryEntries = await this.ctx.database.get('memory_table', {
+          group_id: groupId
+        })
+
+        // 过滤并排序用户好感度
+        const rankings = memoryEntries
+          .filter(entry => entry.trait && entry.trait['好感度'] && !isNaN(Number(entry.trait['好感度'])))
+          .map(entry => ({
+            userId: entry.user_id,
+            like: Number(entry.trait['好感度'])
+          }))
+          .sort((a, b) => b.like - a.like)
+          .slice(0, 10)
+
+        if (rankings.length === 0) {
+          return '当前群组还没有好感度记录~'
+        }
+
+        // 获取群成员信息并构建排名消息
+        const rankMessages = await Promise.all(rankings.map(async (rank, index) => {
+          const member = await session.bot.getGuildMember?.(session.guildId, rank.userId)
+
+          const nickname = member?.user?.name || rank.userId
+
+          return `${index + 1}. ${nickname} 好感度：${rank.like}`
+        }))
+
+        return ['当前群组好感度排行榜：', ...rankMessages].join('\n')
+      })
+
+      ctx.command('mem.like [groupid:number] [userid:number]')
+        .alias('好感度')
+        .action(async ({ session }, groupid, userid) => {
+          const groupId = String(groupid === -1 || !groupid ? session.guildId || session.channelId || '0' : groupid)
+          const userId = String(userid || session.userId)
+
+        const memoryEntry = await this.ctx.database.get('memory_table', {
+          group_id: groupId,
+          user_id: userId
+			}).then(entries => entries[0])
+
+			if (!memoryEntry || !memoryEntry.trait || !memoryEntry.trait['好感度']) {
+				return `<at id="${userId}"/> 我们还不熟呢~`
+			}
+			return `<at id="${userId}"/> 当前好感度：${memoryEntry.trait['好感度']}`
+		})
+
+    ctx.command('mem.dislikeRank [groupid:number]')
+    .alias('差评排名')
+    .action(async ({ session }, groupid) => {
+      const groupId = String(groupid ? groupid : session.guildId || session.channelId || '0')
+
+      // 获取当前群组的所有用户记录
+      const memoryEntries = await this.ctx.database.get('memory_table', {
+        group_id: groupId
+      })
+
+      // 过滤负好感度用户并按照好感度从低到高排序
+      const rankings = memoryEntries
+        .filter(entry => entry.trait && entry.trait['好感度'] && !isNaN(Number(entry.trait['好感度'])) && Number(entry.trait['好感度']) < 0)
+        .map(entry => ({
+          userId: entry.user_id,
+          like: Number(entry.trait['好感度'])
+        }))
+        .sort((a, b) => a.like - b.like)
+        .slice(0, 10)
+
+      if (rankings.length === 0) {
+        return '当前群组还没有差评记录~'
+      }
+
+      // 获取群成员信息并构建排名消息
+      const rankMessages = await Promise.all(rankings.map(async (rank, index) => {
+        const member = await session.bot.getGuildMember?.(session.guildId, rank.userId)
+
+        const nickname = member?.user?.name || rank.userId
+
+        return `${index + 1}. ${nickname} 好感度：${rank.like}`
+      }))
+
+      return ['当前群组差评排行榜：', ...rankMessages].join('\n')
+    })
+
+		ctx.command('mem.mem [groupid:number] [userid:number]',{ authority: 2 })
       .userFields(['authority'])
       .action(async ({ session }, groupid, userid) => {
-        const groupId = String((groupid === '-1' ? undefined : groupid) || session.guildId || session.channelId || '0')
+        const groupId = String(groupid === -1 || !groupid ? session.guildId || session.channelId || '0' : groupid)
         const userId = String(userid || session.userId)
 
 				const memoryEntry = await this.ctx.database.get('memory_table', {
@@ -269,10 +358,10 @@ export class MemoryTableService extends Service {
 			})
 
       //查看历史记录，目前存在问题，用合并的方式显示，所有发送人的昵称都会显示成机器人的，暂时没想出来怎么解决
-      ctx.command('mem.history [groupid:string] [userid:string]',{ authority: 2 })
+      ctx.command('mem.history [groupid:number] [userid:number]',{ authority: 2 })
       .userFields(['authority'])
       .action(async ({ session }, groupid, userid) => {
-        const groupId = String((groupid === '-1' ? undefined : groupid) || session.guildId || session.channelId || '0')
+        const groupId = String(groupid === -1 || !groupid ? session.guildId || session.channelId || '0' : groupid)
         const userId = String(userid || session.userId)
 
 				// 获取历史记录
