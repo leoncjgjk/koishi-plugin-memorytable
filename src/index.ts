@@ -785,8 +785,9 @@ export class MemoryTableService extends Service {
   // 获取用户记忆信息
   public async getMem(userId: string, groupId: string): Promise<string | Record<string, any>> {
     try {
+      const actualGroupId = groupId === '0' ? `private:${userId}` : groupId;
       const memoryEntry = await this.ctx.database.get('memory_table', {
-        group_id: groupId,
+        group_id: actualGroupId,
         user_id: userId
       }).then(entries => entries[0])
 
