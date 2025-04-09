@@ -95,7 +95,7 @@ export class MemoryTableService extends Service {
 			return ''
 		}
 		return content
-			.replace(/<img[^>]*\/>/g, '')
+			.replace(/<img[^>]*\/>/g, '[图片]')
 			.replace(/<json[^>]*\/>/g, '')
 			.replace(/<audio[^>]*\/>/g, '')
 			.replace(/<file[^>]*\/>/g, '')
