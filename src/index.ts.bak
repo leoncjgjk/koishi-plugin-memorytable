@@ -35,10 +35,10 @@ export const Config = Schema.object({
     .description('使用的模型名称'),
   memoryStMessages: Schema.number()
     .default(15)
-    .description('短记忆生成用到的消息数量'),
+    .description("短记忆生成用到的消息数量"),
   memoryStMember: Schema.number()
     .default(3)
-    .description('短记忆生成要求的最少人数'),
+    .description("短记忆生成要求的最少人数"),
   memoryLtWordsLimit: Schema.number()
     .default(300)
     .description('长期记忆字数上限'),
@@ -74,10 +74,6 @@ declare module 'koishi' {
     memorytable: MemoryTableService
   }
 }
-export interface RecentHistories {
-	history: MessageEntry[]
-}
-
 
 // 消息记录结构
 export interface MessageEntry {
@@ -94,7 +90,7 @@ export interface MemoryTableEntry {
 	group_id: string //0代表私聊
 	user_id: string
 	trait: Record<string, any> //对方特征
-	traitBak: Record<string, any> //对方特征
+	traitBak: Record<string, any> //对方特征备份
 	memory_st: string[] //短期记忆
 	memory_lt: string[] //长期记忆，只作为短期记忆和特征生成的参考，并不会发给聊天AI
 	history: MessageEntry[]
@@ -132,7 +128,7 @@ export class MemoryTableService extends Service {
 			group_id: 'string',
 			user_id: 'string',
 			trait: 'json',
-			traitBak: 'json',
+      traitBak: 'json',
 			memory_st: 'list',
 			memory_lt: 'list',
 			history: 'json'
@@ -141,7 +137,6 @@ export class MemoryTableService extends Service {
       autoInc: false,
 		})
 
-		// 注册指令
     ctx.command('mem.getTrait [groupid:number] [userid:number]', { authority: 2 })
     .userFields(['authority'])
     .action(async ({ session }, groupid, userid) => {
@@ -159,18 +154,67 @@ export class MemoryTableService extends Service {
 
       return JSON.stringify(memoryEntry.trait, null, 2)
     })
-
-    // setTrait函数重载
-    ctx.command('mem.setTrait <trait:string>', { authority: 2 })
+		// 注册指令
+		ctx.command('mem.setTrait <trait:string> [groupid:number] [userid:number]',{ authority: 2 })
       .userFields(['authority'])
-      .action(async ({ session }, trait) => {
-        return handleSetTrait.call(this, session, trait)
-      })
+      .action(async ({ session },trait, groupid, userid) => {
+        const groupId = String(groupid === -1 || !groupid ? session.guildId || session.channelId || '0' : groupid)
+        const userId = String(userid || session.userId)
 
-    ctx.command('mem.setTrait --groupid <groupid:number> --userid <userid:number> <trait:string>', { authority: 2 })
-      .userFields(['authority'])
-      .action(async ({ session }, groupid, userid, trait) => {
-        return handleSetTrait.call(this, session, trait, groupid, userid)
+        try {
+          // 解析trait字符串为对象
+          const traitLines = trait.split('\n')
+          const traitObject = {}
+
+          for (const line of traitLines) {
+            const [key, value] = line.split(': ')
+            if (key && value) {
+              traitObject[key.trim()] = value.trim()
+            }
+          }
+
+          // 获取或创建记忆表
+          let memoryEntry = await this.ctx.database.get('memory_table', {
+            group_id: groupId,
+            user_id: userId
+          }).then(entries => entries[0])
+
+          if (!memoryEntry) {
+            memoryEntry = {
+              group_id: groupId,
+              user_id: userId,
+              trait: {},
+              traitBak: {},
+              memory_st: [],
+              memory_lt: [],
+              history: []
+            }
+          }
+
+          // 更新特征
+          memoryEntry.trait = traitObject
+
+          // 保存到数据库
+          await this.ctx.database.upsert('memory_table', [memoryEntry])
+
+          const responseElements = Object.entries(traitObject).map(([key, value]) => {
+            return h('message', [
+              h('author', {}, key),
+              h('content', {}, String(value))
+            ])
+          })
+
+          if(this.config.debugMode){
+            return h('figure', { children: responseElements })
+          }else{
+            ctx.logger.info('figure', { children: responseElements })
+            return '特征设置成功'
+          }
+
+        } catch (error) {
+          this.ctx.logger.error(`设置特征失败: ${error.message}`)
+          return '设置特征失败，请检查输入格式是否正确'
+        }
       })
 
 		ctx.command('mem.trait [groupid:number] [userid:number]',{ authority: 2 })
@@ -524,7 +568,6 @@ export class MemoryTableService extends Service {
 
 		// 监听消息
 		ctx.on('message', async (session: Session) => {
-      ctx.logger.info('收到message.content:',session.content)
       if(!config.botMesReport){
         await this.handleMessage(session)
       }else{
@@ -577,7 +620,7 @@ export class MemoryTableService extends Service {
           group_id: targetGroupId,
           user_id: targetUserId,
           trait: {},
-          traitBak: {},
+ traitBak: {},
           memory_st: [],
           memory_lt: [],
           history: []
@@ -683,7 +726,7 @@ export class MemoryTableService extends Service {
 						group_id: queueGroupId,
 						user_id: queueUserId,
 						trait: {},
-            traitBak: {},
+						traitBak: {},
 						memory_st: [],
 						memory_lt: [],
 						history: []
@@ -751,7 +794,7 @@ export class MemoryTableService extends Service {
 				group_id: groupId,
 				user_id: userId,
 				trait: {},
-        traitBak: {},
+				traitBak: {},
 				memory_st: [],
 				memory_lt: [],
 				history: []
@@ -764,6 +807,7 @@ export class MemoryTableService extends Service {
 		// 保存或更新记忆表
 		await this.ctx.database.upsert('memory_table', [memoryEntry])
 	}
+
   // 自动更新trait
   private async autoUpdateTrait(user_id,group_id,session) {
     const memoryEntries = await this.ctx.database.get('memory_table', {
@@ -782,7 +826,6 @@ export class MemoryTableService extends Service {
 
   // 传入机器人消息
   public async setMemBotMes(session: Session, content: string,authID:string) {
-    this.ctx.logger.info('传入oob回传的机器人消息:',content)
     if(!this.config.botMesReport){
       await this.handleMessageBotOob(session,content,authID)
     }else{
@@ -792,8 +835,6 @@ export class MemoryTableService extends Service {
 
   // 获取用户记忆信息
   public async getMem(userId: string, groupId: string): Promise<string | Record<string, any>> {
-    this.ctx.logger.info('进入getMem函数')
-
     try {
       const actualGroupId = groupId === '0' ? `private:${userId}` : groupId;
       const memoryEntry = await this.ctx.database.get('memory_table', {
@@ -886,104 +927,82 @@ async function callOpenAI(messages: Array<{ role: string, content: string }>, ma
 }
 
   // 生成用户特征的工具函数
-  async function generateTrait(userId: string, groupId: string,session:Session): Promise<Record<string, string>> {
-    try {
-      // 获取记忆表
-      const memoryEntry = await this.ctx.database.get('memory_table', {
-        group_id: groupId,
-        user_id: userId
-      }).then(entries => entries[0])
+async function generateTrait(userId: string, groupId: string, session: Session): Promise<Record<string, string>> {
+  try {
+    const memoryEntry = await this.ctx.database.get('memory_table', {
+      group_id: groupId,
+      user_id: userId
+    }).then(entries => entries[0]);
 
-      if (!memoryEntry || !memoryEntry.history.length) {
-        return {}
-      }
-
-      // 格式化最近的历史消息
-      const recentHistory = memoryEntry.history
-        .slice(-this.config.traitMesNumber)
-        .filter(entry => !entry.used)
-
-      if (recentHistory.length <= 2) {
-        this.ctx.logger.info('未使用的消息数量不足，取消特征更新')
-        return memoryEntry.trait || {}
-      }
-
-      const formattedHistory = recentHistory.map(entry => {
-        const tempContent = entry.content.replace(/@\d+\s*/g, '')
-        return `${entry.sender_name}(${entry.sender_id}): ${tempContent}`
-      }).join('\n')
-
-      // 为每个特征项生成内容
-      let trait: Record<string, string> = {}
-      const messages = [
-        { role: 'system', content: Object.keys(memoryEntry.trait).length > 0 ?
-          '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。当前已有特征信息，请基于现有特征进行分析。如果没有充分的聊天记录依据，请保持原有特征不变。请按照特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' :
-          '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。请按照提供的特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' },
-        { role: 'user', content: `聊天记录（其中用户的id是${userId}，机器人的id是${session.bot.selfId}，你要分析的是用户的特征，请注意分辨）：
-  ${formattedHistory}
-  ${Object.keys(memoryEntry.trait).length > 0 ? `当前特征：
-  ${JSON.stringify(memoryEntry.trait, null, 2)}
-  ` : ''}特征模板：
-  ${JSON.stringify(this.config.traitTemplate, null, 2)}` }
-      ]
-      this.ctx.logger.info('记忆分析：',messages)
-
-      try {
-        const response = await callOpenAI.call(this, messages)
-        // 预处理响应，移除可能存在的Markdown代码块
-        const cleanResponse = response.replace(/^```json\s*|```\s*$/g, '').trim()
-        const parsedTrait = JSON.parse(cleanResponse)
-
-        // 验证返回的特征是否完整
-        if (!parsedTrait || Object.keys(parsedTrait).length === 0) {
-          this.ctx.logger.warn('API返回的特征为空，尝试使用现有特征')
-          if (Object.keys(memoryEntry.trait).length > 0) {
-            this.ctx.logger.info('使用当前trait数据')
-            return memoryEntry.trait
-          } else if (memoryEntry.traitBak && Object.keys(memoryEntry.traitBak).length > 0) {
-            this.ctx.logger.info('当前trait为空，从traitBak恢复trait数据')
-            trait = { ...memoryEntry.traitBak }
-          } else {
-            trait = {}
-          }
-        } else {
-          trait = parsedTrait
-        }
-
-        // 标记已使用的消息
-        const updatedHistory = memoryEntry.history.map((entry, index) => {
-          if (index >= memoryEntry.history.length - this.config.traitMesNumber) {
-            return { ...entry, used: true }
-          }
-          return entry
-        })
-        this.ctx.logger.info('traitBak：',{ ...memoryEntry.traitBak })
-        this.ctx.logger.info('trait：',{ ...memoryEntry.trait })
-        // 备份当前trait到traitBak
-        const traitBak = { ...memoryEntry.trait }
-
-        // 更新记忆表，保留其他字段不变
-        await this.ctx.database.upsert('memory_table', [{
-          ...memoryEntry,
-          trait,
-          traitBak,
-          history: updatedHistory
-        }])
-
-        this.ctx.logger.info('新特征结果：',trait)
-
-      } catch (error) {
-        this.ctx.logger.warn(`生成特征失败: ${error.message}`)
-        // 发生错误时保持原有特征
-        trait = memoryEntry.trait || {}
-      }
-
-      return trait
-    } catch (error) {
-      this.ctx.logger.error(`生成用户特征失败: ${error.message}`)
-      return {}
+    if (!memoryEntry || !memoryEntry.history.length) {
+      return {};
     }
+
+    const recentHistory = memoryEntry.history.slice(-this.config.traitMesNumber).filter(entry => !entry.used);
+    if (recentHistory.length <= 2) {
+      this.ctx.logger.info('未使用的消息数量不足，取消特征更新');
+      return memoryEntry.trait || {};
+    }
+
+    const formattedHistory = recentHistory.map(entry => {
+      const tempContent = entry.content.replace(/@\d+\s*/g, '');
+      return `${entry.sender_name}(${entry.sender_id}): ${tempContent}`;
+    }).join('\n');
+
+    let trait: Record<string, string> = {};
+    const messages = [
+      { role: 'system', content: Object.keys(memoryEntry.trait).length > 0 ? '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。当前已有特征信息，请基于现有特征进行分析。如果没有充分的聊天记录依据，请保持原有特征不变。请按照特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' : '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。请按照提供的特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' },
+      { role: 'user', content: `聊天记录（其中用户的id是${userId}，机器人的id是${session.bot.selfId}，你要分析的是用户的特征，请注意分辨）：\n${formattedHistory}\n${Object.keys(memoryEntry.trait).length > 0 ? `当前特征：\n${JSON.stringify(memoryEntry.trait, null, 2)}\n` : ''}特征模板：\n${JSON.stringify(this.config.traitTemplate, null, 2)}` }
+    ];
+    this.ctx.logger.info('记忆分析：', messages);
+
+    try {
+      const response = await callOpenAI.call(this, messages);
+      const cleanResponse = response.replace(/^```json\s*|```\s*$/g, '').trim();
+      const parsedTrait = JSON.parse(cleanResponse);
+      if (!parsedTrait || Object.keys(parsedTrait).length === 0) {
+        this.ctx.logger.warn('API返回的特征为空，尝试使用现有特征');
+        if (Object.keys(memoryEntry.trait).length > 0) {
+          this.ctx.logger.info('使用当前trait数据');
+          return memoryEntry.trait;
+        } else if (memoryEntry.traitBak && Object.keys(memoryEntry.traitBak).length > 0) {
+          this.ctx.logger.info('当前trait为空，从traitBak恢复trait数据');
+          trait = { ...memoryEntry.traitBak };
+        } else {
+          trait = {};
+        }
+      } else {
+        trait = parsedTrait;
+      }
+
+      const updatedHistory = memoryEntry.history.map((entry, index) => {
+        if (index >= memoryEntry.history.length - this.config.traitMesNumber) {
+          return { ...entry, used: true };
+        }
+        return entry;
+      });
+
+      this.ctx.logger.info('traitBak：', { ...memoryEntry.traitBak });
+      this.ctx.logger.info('trait：', { ...memoryEntry.trait });
+      const traitBak = { ...memoryEntry.trait };
+      await this.ctx.database.upsert('memory_table', [{
+        ...memoryEntry,
+        trait,
+        traitBak,
+        history: updatedHistory
+      }]);
+      this.ctx.logger.info('新特征结果：', trait);
+    } catch (error) {
+      this.ctx.logger.warn(`生成特征失败: ${error.message}`);
+      trait = memoryEntry.trait || {};
+    }
+
+    return trait;
+  } catch (error) {
+    this.ctx.logger.error(`生成用户特征失败: ${error.message}`);
+    return {};
   }
+}
   // 获取群聊好感度排名数据
 async function getLikeRankings(memoryEntries) {
   // 获取当前群组的所有用户记录
@@ -1008,72 +1027,6 @@ async function getLikeRankings(memoryEntries) {
             like: Number(entry.trait[likeKey])
           }
         })
-}
-
-// 设置用户特征的工具函数，指令用
-async function handleSetTrait(this: MemoryTableService, session: Session, trait: string, groupid?: number, userid?: number) {
-  const groupId = String(groupid === undefined ? session.guildId || session.channelId || '0' : groupid)
-  const userId = String(userid === undefined ? session.userId : userid)
-
-  try {
-    // 尝试解析为JSON格式
-    let traitObject;
-    try {
-      traitObject = JSON.parse(trait);
-    } catch (jsonError) {
-      // 如果JSON解析失败，尝试按原格式解析
-      const traitLines = trait.split('\n')
-      traitObject = {}
-      for (const line of traitLines) {
-        const [key, value] = line.split(': ')
-        if (key && value) {
-          traitObject[key.trim()] = value.trim()
-        }
-      }
-    }
-
-    // 获取或创建记忆表
-    let memoryEntry = await this.ctx.database.get('memory_table', {
-      group_id: groupId,
-      user_id: userId
-    }).then(entries => entries[0])
-
-    if (!memoryEntry) {
-      memoryEntry = {
-        group_id: groupId,
-        user_id: userId,
-        trait: {},
-        traitBak: {},
-        memory_st: [],
-        memory_lt: [],
-        history: []
-      }
-    }
-
-    // 更新特征
-    memoryEntry.trait = traitObject
-
-    // 保存到数据库
-    await this.ctx.database.upsert('memory_table', [memoryEntry])
-
-    const responseElements = Object.entries(traitObject).map(([key, value]) => {
-      return h('message', [
-        h('author', {}, key),
-        h('content', {}, String(value))
-      ])
-    })
-
-    if(this.config.debugMode){
-      return h('figure', { children: responseElements })
-    }else{
-      this.ctx.logger.info('figure', { children: responseElements })
-      return '特征设置成功'
-    }
-
-  } catch (error) {
-    this.ctx.logger.error(`设置特征失败: ${error.message}`)
-    return '设置特征失败，请检查输入格式是否正确'
-  }
 }
 
 // 导出插件
