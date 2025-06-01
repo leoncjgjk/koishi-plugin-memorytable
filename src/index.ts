@@ -12,6 +12,7 @@ export interface Config {
   model?: string
   memoryStMessages?: number
   memoryStMesNumMax?: number
+  memoryStMesNumUsed?: number
   memoryLtWordsLimit?: number
   traitMesNumberFT?: number
   traitMesNumber?: number
@@ -38,7 +39,10 @@ export const Config = Schema.object({
     .description('短记忆生成用到的消息数量'),
   memoryStMesNumMax: Schema.number()
     .default(10)
-    .description('短记忆保留的条数'),
+    .description('短记忆保留的条数（只是本地保存的上限）'),
+  memoryStMesNumUsed: Schema.number()
+    .default(3)
+    .description('短记忆真实使用的条数（发给AI最近x条）'),
   memoryLtWordsLimit: Schema.number()
     .default(300)
     .description('长期记忆字数上限'),
@@ -895,46 +899,50 @@ export class MemoryTableService extends Service {
 
     try {
       const actualGroupId = groupId === '0' ? `private:${userId}` : groupId;
-      const memoryEntry = await this.ctx.database.get('memory_table', {
+
+      const traitMemoryEntry = await this.ctx.database.get('memory_table', {
         group_id: actualGroupId,
         user_id: userId
-      }).then(entries => entries[0])
+      }).then(entries => entries[0]);
 
-      if (!memoryEntry) {
-        this.ctx.logger.info(`还没有记忆`)
-        return ''
-      }
+      const sharedMemoryEntry = await this.ctx.database.get('memory_table', {
+        group_id: actualGroupId,
+        user_id: '0' // user_id 为 '0' 代表群聊总记录
+      }).then(entries => entries[0]);
 
-      const result: Record<string, any> = {}
-      // 添加非空的特征信息
-      if (Object.keys(memoryEntry.trait).length > 0) {
-        // 对特征中的文本进行替换
+      const result: Record<string, any> = {};
+
+      if (traitMemoryEntry && traitMemoryEntry.trait && Object.keys(traitMemoryEntry.trait).length > 0) {
         result.trait = Object.fromEntries(
-          Object.entries(memoryEntry.trait).map(([key, value]) => [
+          Object.entries(traitMemoryEntry.trait).map(([key, value]) => [
             key,
             String(value).replace(/用户/g, '对方').replace(/机器人/g, '我')
           ])
-        )
+        );
       }
 
-      // 添加非空的短期记忆
-      if (memoryEntry.memory_st.length > 0) {
-        result.memory_st = memoryEntry.memory_st.map(memory =>
+      if (sharedMemoryEntry && sharedMemoryEntry.memory_st && sharedMemoryEntry.memory_st.length > 0) {
+        // 只取最近的memoryStMesNumUsed条记录
+        result.memory_st = sharedMemoryEntry.memory_st
+          .slice(-this.config.memoryStMesNumUsed)
+          .map(memory => memory.replace(/用户/g, '对方').replace(/机器人/g, '我'));
+      }
+
+      if (sharedMemoryEntry && sharedMemoryEntry.memory_lt && sharedMemoryEntry.memory_lt.length > 0) {
+        result.memory_lt = sharedMemoryEntry.memory_lt.map(memory =>
           memory.replace(/用户/g, '对方').replace(/机器人/g, '我')
-        )
+        );
       }
 
-      // 添加非空的长期记忆
-      if (memoryEntry.memory_lt.length > 0) {
-        result.memory_lt = memoryEntry.memory_lt.map(memory =>
-          memory.replace(/用户/g, '对方').replace(/机器人/g, '我')
-        )
+      if (Object.keys(result).length === 0) {
+        this.ctx.logger.info(`用户 ${userId} (traits) 或短期/长期在群组 ${actualGroupId} 中没有相关记忆`);
+        return '';
       }
 
-      return Object.keys(result).length > 0 ? result : ''
+      return result;
     } catch (error) {
-      this.ctx.logger.error(`获取记忆信息失败: ${error.message}`)
-      return ''
+      this.ctx.logger.error(`获取记忆信息失败: ${error.message}`);
+      return '';
     }
   }
 
@@ -984,7 +992,7 @@ async function callOpenAI(messages: Array<{ role: string, content: string }>, ma
   }
 }
 
-//生成群聊记录总结的工具函数
+//生成群聊短期记录总结的工具函数
 async function generateSummary(groupId: string): Promise<string> {
   try {
     // 获取群聊的记忆条目，user_id 为 '0' 代表群聊的整体记忆
@@ -1003,8 +1011,8 @@ async function generateSummary(groupId: string): Promise<string> {
       .filter(entry => !entry.used)
       .slice(-this.config.memoryStMessages)
 
-    // 提取最近的3条 memory_st
-    const recentMemorySt = memoryEntry.memory_st.slice(-3)
+    // 提取最近的memoryStMesNumUsed条 memory_st
+    const recentMemorySt = memoryEntry.memory_st.slice(-this.config.memoryStMesNumUsed)
 
     if (recentHistory.length === 0 && recentMemorySt.length === 0) {
       this.ctx.logger.info(`群聊 ${groupId} 没有足够信息生成总结`)
@@ -1016,13 +1024,13 @@ async function generateSummary(groupId: string): Promise<string> {
       return `${entry.sender_name}: ${entry.content}`
     }).join('\n')
 
-    let systemContent = '你是一个聊天记录总结助手，你的任务是根据提供的聊天记录和之前的总结，生成一段新的、简洁的聊天记录总结。请直接返回总结内容，不要添加任何解释或额外信息。'
+    let systemContent = '你是一个聊天记录总结助手，你的任务是根据提供的聊天记录和之前的总结，生成一段新的、简洁的聊天记录总结，不需要细枝末节的描写，而且新的总结不要和之前的总结重复。请直接返回总结内容，不要添加任何解释或额外信息。'
     let userContent = `这是最近的聊天记录：\n${formattedHistory}\n\n请根据以上信息，生成新的聊天记录总结。`
 
     if (recentMemorySt.length > 0) {
       userContent = `这是之前的几条总结：\n${recentMemorySt.join('\n')}\n\n${userContent}`
     } else {
-      systemContent = '你是一个聊天记录总结助手，你的任务是根据提供的聊天记录，生成一段新的、简洁的聊天记录总结。请直接返回总结内容，不要添加任何解释或额外信息。'
+      systemContent = '你是一个聊天记录总结助手，你的任务是根据提供的聊天记录，生成一段新的、简洁的聊天记录总结，不需要细枝末节的描写，而且新的总结不要和之前的总结重复。请直接返回总结内容，不要添加任何解释或额外信息。'
     }
 
     const messages = [
