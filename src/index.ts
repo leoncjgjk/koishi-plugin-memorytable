@@ -11,7 +11,7 @@ export interface Config {
   apiKey?: string
   model?: string
   memoryStMessages?: number
-  memoryStMember?: number
+  memoryStMesNumMax?: number
   memoryLtWordsLimit?: number
   traitMesNumberFT?: number
   traitMesNumber?: number
@@ -34,11 +34,11 @@ export const Config = Schema.object({
     .default('gpt-3.5-turbo')
     .description('使用的模型名称'),
   memoryStMessages: Schema.number()
-    .default(15)
+    .default(50)
     .description('短记忆生成用到的消息数量'),
-  memoryStMember: Schema.number()
-    .default(3)
-    .description('短记忆生成要求的最少人数'),
+  memoryStMesNumMax: Schema.number()
+    .default(10)
+    .description('短记忆保留的条数'),
   memoryLtWordsLimit: Schema.number()
     .default(300)
     .description('长期记忆字数上限'),
@@ -92,7 +92,7 @@ export interface MessageEntry {
 // 记忆表结构
 export interface MemoryTableEntry {
 	group_id: string //0代表私聊
-	user_id: string
+	user_id: string //0代表本群聊天总记录
 	trait: Record<string, any> //对方特征
 	traitBak: Record<string, any> //对方特征
 	memory_st: string[] //短期记忆
@@ -122,6 +122,7 @@ export class MemoryTableService extends Service {
 	static inject = ['database']
 
   private messageQueue: Array<{ userId: string, groupId: string }> = []
+  private generatingSummaryFor: Set<string> = new Set()
 
   constructor(ctx: Context, config: Config & { maxMessages: number }) {
     // 调用 Service 构造函数，注册服务名称
@@ -549,6 +550,42 @@ export class MemoryTableService extends Service {
 	}
   	// 处理oob回传机器人消息
 	private async handleMessageBotOob(session: Session, content: string , authID:string) {
+    //将消息存在群聊数据中
+    const groupChatGroupId = session.guildId || session.channelId
+    // 仅在群聊中记录总消息
+    if (groupChatGroupId) {
+      const groupMessageEntry: MessageEntry = {
+        message_id: 're_oob_' + session.messageId, // 添加前缀以区分
+        content: this.filterMessageContent(content || session.content),
+        sender_id: session.bot.selfId,
+        sender_name: '机器人',
+        timestamp: new Date(),
+        used: false
+      }
+      if(groupMessageEntry.content === '') return // 如果过滤后内容为空，则不保存
+
+      let groupMemoryEntry = await this.ctx.database.get('memory_table', {
+        group_id: groupChatGroupId,
+        user_id: '0' // user_id 为 '0' 代表群聊总记录
+      }).then(entries => entries[0])
+
+      if (!groupMemoryEntry) {
+        groupMemoryEntry = {
+          group_id: groupChatGroupId,
+          user_id: '0',
+          trait: {},
+          traitBak: {},
+          memory_st: [],
+          memory_lt: [],
+          history: []
+        }
+      }
+      const maxGroupHistory = Math.min(this.config.maxMessages * 5, groupMemoryEntry.history.length + 1)
+      groupMemoryEntry.history = [...groupMemoryEntry.history, groupMessageEntry].slice(-maxGroupHistory)
+      await this.ctx.database.upsert('memory_table', [groupMemoryEntry])
+      this.ctx.logger.info(`OOB消息已存入群聊 ${groupChatGroupId} 的总记录`)
+    }
+
     // this.ctx.logger.info('处理oob回传机器人消息',session)
     // 获取目标用户ID
     let targetUserId = authID
@@ -577,7 +614,7 @@ export class MemoryTableService extends Service {
           group_id: targetGroupId,
           user_id: targetUserId,
           trait: {},
-          traitBak: {},
+            traitBak: {},
           memory_st: [],
           memory_lt: [],
           history: []
@@ -701,8 +738,70 @@ export class MemoryTableService extends Service {
   }
 	// 处理用户消息
 	private async handleMessage(session: Session) {
+    //将消息存在群聊数据中
+    const groupChatGroupId = session.guildId || session.channelId
+    // 仅在群聊中记录总消息
+    if (groupChatGroupId) {
+      const groupMessageEntry: MessageEntry = {
+        message_id: session.messageId,
+        content: this.filterMessageContent(session.content),
+        sender_id: session.userId,
+        sender_name: session.username,
+        timestamp: new Date(),
+        used: false // 群聊总记录的消息初始状态也为未使用
+      }
 
-		// 检查是否需要响应消息
+      let groupMemoryEntry = await this.ctx.database.get('memory_table', {
+        group_id: groupChatGroupId,
+        user_id: '0' // user_id 为 '0' 代表群聊总记录
+      }).then(entries => entries[0])
+
+      if (!groupMemoryEntry) {
+        groupMemoryEntry = {
+          group_id: groupChatGroupId,
+          user_id: '0',
+          trait: {},
+          traitBak: {},
+          memory_st: [],
+          memory_lt: [],
+          history: []
+        }
+      }
+      const maxGroupHistory = Math.min(this.config.maxMessages * 5, groupMemoryEntry.history.length + 1) // 群聊总记录可以适当多一些
+      groupMemoryEntry.history = [...groupMemoryEntry.history, groupMessageEntry].slice(-maxGroupHistory)
+      await this.ctx.database.upsert('memory_table', [groupMemoryEntry])
+      this.ctx.logger.info(`消息已存入群聊 ${groupChatGroupId} 的总记录`)
+
+      //生成短期记忆总结
+      if (groupChatGroupId && !this.generatingSummaryFor.has(groupChatGroupId)) {
+        const unusedMessagesCount = groupMemoryEntry.history.filter(entry => !entry.used).length
+        if (unusedMessagesCount >= this.config.memoryStMessages) {
+          this.generatingSummaryFor.add(groupChatGroupId)
+          this.ctx.logger.info(`群聊 ${groupChatGroupId} 满足生成总结条件，开始生成...`)
+          generateSummary.call(this, groupChatGroupId)
+            .then(summary => {
+              if (summary) {
+                this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成成功。`)
+              } else {
+                this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成未返回内容或失败。`)
+              }
+            })
+            .catch(error => {
+              this.ctx.logger.error(`群聊 ${groupChatGroupId} 总结生成出错: ${error.message}`)
+            })
+            .finally(() => {
+              this.generatingSummaryFor.delete(groupChatGroupId)
+              this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成流程结束。`)
+            })
+        } else {
+          this.ctx.logger.info(`群聊 ${groupChatGroupId} 未使用消息数量 ${unusedMessagesCount}，未达到生成总结所需的 ${this.config.memoryStMessages} 条。`)
+        }
+      } else if (this.generatingSummaryFor.has(groupChatGroupId)) {
+        this.ctx.logger.info(`群聊 ${groupChatGroupId} 已有总结正在生成中，跳过本次触发。`)
+      }
+    }
+
+    // 检查是否需要响应消息
 		const shouldRespond = (
 			// 引用回复
 			session.quote?.user?.id === session.bot.selfId ||
@@ -885,105 +984,205 @@ async function callOpenAI(messages: Array<{ role: string, content: string }>, ma
   }
 }
 
-  // 生成用户特征的工具函数
-  async function generateTrait(userId: string, groupId: string,session:Session): Promise<Record<string, string>> {
-    try {
-      // 获取记忆表
-      const memoryEntry = await this.ctx.database.get('memory_table', {
-        group_id: groupId,
-        user_id: userId
-      }).then(entries => entries[0])
+//生成群聊记录总结的工具函数
+async function generateSummary(groupId: string): Promise<string> {
+  try {
+    // 获取群聊的记忆条目，user_id 为 '0' 代表群聊的整体记忆
+    const memoryEntry = await this.ctx.database.get('memory_table', {
+      group_id: groupId,
+      user_id: '0'
+    }).then(entries => entries[0])
 
-      if (!memoryEntry || !memoryEntry.history.length) {
-        return {}
+    if (!memoryEntry) {
+      this.ctx.logger.info(`群聊 ${groupId} 尚无记忆条目`)
+      return ''
+    }
+
+    // 提取最近的 memoryStMessages 条未使用过的 history 记录
+    const recentHistory = memoryEntry.history
+      .filter(entry => !entry.used)
+      .slice(-this.config.memoryStMessages)
+
+    // 提取最近的3条 memory_st
+    const recentMemorySt = memoryEntry.memory_st.slice(-3)
+
+    if (recentHistory.length === 0 && recentMemorySt.length === 0) {
+      this.ctx.logger.info(`群聊 ${groupId} 没有足够信息生成总结`)
+      return ''
+    }
+
+    // 格式化消息
+    const formattedHistory = recentHistory.map(entry => {
+      return `${entry.sender_name}: ${entry.content}`
+    }).join('\n')
+
+    let systemContent = '你是一个聊天记录总结助手，你的任务是根据提供的聊天记录和之前的总结，生成一段新的、简洁的聊天记录总结。请直接返回总结内容，不要添加任何解释或额外信息。'
+    let userContent = `这是最近的聊天记录：\n${formattedHistory}\n\n请根据以上信息，生成新的聊天记录总结。`
+
+    if (recentMemorySt.length > 0) {
+      userContent = `这是之前的几条总结：\n${recentMemorySt.join('\n')}\n\n${userContent}`
+    } else {
+      systemContent = '你是一个聊天记录总结助手，你的任务是根据提供的聊天记录，生成一段新的、简洁的聊天记录总结。请直接返回总结内容，不要添加任何解释或额外信息。'
+    }
+
+    const messages = [
+      {
+        role: 'system',
+        content: systemContent
+      },
+      {
+        role: 'user',
+        content: userContent
       }
+    ]
 
-      // 格式化最近的历史消息
-      const recentHistory = memoryEntry.history
-        .slice(-this.config.traitMesNumber)
-        .filter(entry => !entry.used)
+    this.ctx.logger.info(`为群聊 ${groupId} 生成总结，输入信息:`, messages)
 
-      if (recentHistory.length <= 2) {
-        this.ctx.logger.info('未使用的消息数量不足，取消特征更新')
-        return memoryEntry.trait || {}
+    // 调用 OpenAI API 生成总结
+    let summary = await callOpenAI.call(this, messages)
+
+    if (!summary || summary.trim() === '') {
+      this.ctx.logger.warn(`群聊 ${groupId} 生成的总结为空`)
+      return ''
+    }
+
+    // 在生成的总结前添加聊天记录的时间区间
+    if (recentHistory.length > 0) {
+      const startTime = new Date(recentHistory[0].timestamp).toLocaleString()
+      const endTime = new Date(recentHistory[recentHistory.length - 1].timestamp).toLocaleString()
+      summary = `[${startTime} ~ ${endTime}] ${summary}`
+    }
+
+    // 将新生成的总结添加到 memory_st
+    const updatedMemorySt = [...memoryEntry.memory_st, summary]
+    if (updatedMemorySt.length > this.config.memoryStMesNumMax) {
+      updatedMemorySt.splice(0, updatedMemorySt.length - this.config.memoryStMesNumMax)
+    }
+
+    // 标记已使用的 history 记录
+    const usedHistoryMessageIds = new Set(recentHistory.map(entry => entry.message_id))
+    const updatedHistory = memoryEntry.history.map(entry => {
+      if (usedHistoryMessageIds.has(entry.message_id)) {
+        return { ...entry, used: true }
       }
+      return entry
+    })
 
-      const formattedHistory = recentHistory.map(entry => {
-        const tempContent = entry.content.replace(/@\d+\s*/g, '')
-        return `${entry.sender_name}(${entry.sender_id}): ${tempContent}`
-      }).join('\n')
+    // 更新数据库
+    await this.ctx.database.upsert('memory_table', [{
+      ...memoryEntry,
+      memory_st: updatedMemorySt,
+      history: updatedHistory
+    }])
 
-      // 为每个特征项生成内容
-      let trait: Record<string, string> = {}
-      const messages = [
-        { role: 'system', content: Object.keys(memoryEntry.trait).length > 0 ?
-          '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。当前已有特征信息，请基于现有特征进行分析。如果没有充分的聊天记录依据，请保持原有特征不变。请按照特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' :
-          '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。请按照提供的特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' },
-        { role: 'user', content: `聊天记录（其中用户的id是${userId}，机器人的id是${session.bot.selfId}，你要分析的是用户的特征，请注意分辨）：
-  ${formattedHistory}
-  ${Object.keys(memoryEntry.trait).length > 0 ? `当前特征：
-  ${JSON.stringify(memoryEntry.trait, null, 2)}
-  ` : ''}特征模板：
-  ${JSON.stringify(this.config.traitTemplate, null, 2)}` }
-      ]
-      this.ctx.logger.info('记忆分析：',messages)
+    this.ctx.logger.info(`群聊 ${groupId} 的新总结已生成并保存: ${summary}`)
+    return summary
 
-      try {
-        const response = await callOpenAI.call(this, messages)
-        // 预处理响应，移除可能存在的Markdown代码块
-        const cleanResponse = response.replace(/^```json\s*|```\s*$/g, '').trim()
-        const parsedTrait = JSON.parse(cleanResponse)
+  } catch (error) {
+    this.ctx.logger.error(`为群聊 ${groupId} 生成总结失败: ${error.message}`)
+    return ''
+  }
+}
 
-        // 验证返回的特征是否完整
-        if (!parsedTrait || Object.keys(parsedTrait).length === 0) {
-          this.ctx.logger.warn('API返回的特征为空，尝试使用现有特征')
-          if (Object.keys(memoryEntry.trait).length > 0) {
-            this.ctx.logger.info('使用当前trait数据')
-            return memoryEntry.trait
-          } else if (memoryEntry.traitBak && Object.keys(memoryEntry.traitBak).length > 0) {
-            this.ctx.logger.info('当前trait为空，从traitBak恢复trait数据')
-            trait = { ...memoryEntry.traitBak }
-          } else {
-            trait = {}
-          }
-        } else {
-          trait = parsedTrait
-        }
+// 生成用户特征的工具函数
+async function generateTrait(userId: string, groupId: string,session:Session): Promise<Record<string, string>> {
+  try {
+    // 获取记忆表
+    const memoryEntry = await this.ctx.database.get('memory_table', {
+      group_id: groupId,
+      user_id: userId
+    }).then(entries => entries[0])
 
-        // 标记已使用的消息
-        const updatedHistory = memoryEntry.history.map((entry, index) => {
-          if (index >= memoryEntry.history.length - this.config.traitMesNumber) {
-            return { ...entry, used: true }
-          }
-          return entry
-        })
-        this.ctx.logger.info('traitBak：',{ ...memoryEntry.traitBak })
-        this.ctx.logger.info('trait：',{ ...memoryEntry.trait })
-        // 备份当前trait到traitBak
-        const traitBak = { ...memoryEntry.trait }
-
-        // 更新记忆表，保留其他字段不变
-        await this.ctx.database.upsert('memory_table', [{
-          ...memoryEntry,
-          trait,
-          traitBak,
-          history: updatedHistory
-        }])
-
-        this.ctx.logger.info('新特征结果：',trait)
-
-      } catch (error) {
-        this.ctx.logger.warn(`生成特征失败: ${error.message}`)
-        // 发生错误时保持原有特征
-        trait = memoryEntry.trait || {}
-      }
-
-      return trait
-    } catch (error) {
-      this.ctx.logger.error(`生成用户特征失败: ${error.message}`)
+    if (!memoryEntry || !memoryEntry.history.length) {
       return {}
     }
+
+    // 格式化最近的历史消息
+    const recentHistory = memoryEntry.history
+      .slice(-this.config.traitMesNumber)
+      .filter(entry => !entry.used)
+
+    if (recentHistory.length <= 2) {
+      this.ctx.logger.info('未使用的消息数量不足，取消特征更新')
+      return memoryEntry.trait || {}
+    }
+
+    const formattedHistory = recentHistory.map(entry => {
+      const tempContent = entry.content.replace(/@\d+\s*/g, '')
+      return `${entry.sender_name}(${entry.sender_id}): ${tempContent}`
+    }).join('\n')
+
+    // 为每个特征项生成内容
+    let trait: Record<string, string> = {}
+    const messages = [
+      { role: 'system', content: Object.keys(memoryEntry.trait).length > 0 ?
+        '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。当前已有特征信息，请基于现有特征进行分析。如果没有充分的聊天记录依据，请保持原有特征不变。请按照特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' :
+        '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。请按照提供的特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' },
+      { role: 'user', content: `聊天记录（其中用户的id是${userId}，机器人的id是${session.bot.selfId}，你要分析的是用户的特征，请注意分辨）：
+${formattedHistory}
+${Object.keys(memoryEntry.trait).length > 0 ? `当前特征：
+${JSON.stringify(memoryEntry.trait, null, 2)}
+` : ''}特征模板：
+${JSON.stringify(this.config.traitTemplate, null, 2)}` }
+    ]
+    this.ctx.logger.info('记忆分析：',messages)
+
+    try {
+      const response = await callOpenAI.call(this, messages)
+      // 预处理响应，移除可能存在的Markdown代码块
+      const cleanResponse = response.replace(/^```json\s*|```\s*$/g, '').trim()
+      const parsedTrait = JSON.parse(cleanResponse)
+
+      // 验证返回的特征是否完整
+      if (!parsedTrait || Object.keys(parsedTrait).length === 0) {
+        this.ctx.logger.warn('API返回的特征为空，尝试使用现有特征')
+        if (Object.keys(memoryEntry.trait).length > 0) {
+          this.ctx.logger.info('使用当前trait数据')
+          return memoryEntry.trait
+        } else if (memoryEntry.traitBak && Object.keys(memoryEntry.traitBak).length > 0) {
+          this.ctx.logger.info('当前trait为空，从traitBak恢复trait数据')
+          trait = { ...memoryEntry.traitBak }
+        } else {
+          trait = {}
+        }
+      } else {
+        trait = parsedTrait
+      }
+
+      // 标记已使用的消息
+      const updatedHistory = memoryEntry.history.map((entry, index) => {
+        if (index >= memoryEntry.history.length - this.config.traitMesNumber) {
+          return { ...entry, used: true }
+        }
+        return entry
+      })
+      this.ctx.logger.info('traitBak：',{ ...memoryEntry.traitBak })
+      this.ctx.logger.info('trait：',{ ...memoryEntry.trait })
+      // 备份当前trait到traitBak
+      const traitBak = { ...memoryEntry.trait }
+
+      // 更新记忆表，保留其他字段不变
+      await this.ctx.database.upsert('memory_table', [{
+        ...memoryEntry,
+        trait,
+        traitBak,
+        history: updatedHistory
+      }])
+
+      this.ctx.logger.info('新特征结果：',trait)
+
+    } catch (error) {
+      this.ctx.logger.warn(`生成特征失败: ${error.message}`)
+      // 发生错误时保持原有特征
+      trait = memoryEntry.trait || {}
+    }
+
+    return trait
+  } catch (error) {
+    this.ctx.logger.error(`生成用户特征失败: ${error.message}`)
+    return {}
   }
+}
   // 获取群聊好感度排名数据
 async function getLikeRankings(memoryEntries) {
   // 获取当前群组的所有用户记录
