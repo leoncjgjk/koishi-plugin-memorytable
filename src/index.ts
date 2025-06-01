@@ -13,7 +13,7 @@ export interface Config {
   memoryStMessages?: number
   memoryStMesNumMax?: number
   memoryStMesNumUsed?: number
-  memoryLtWordsLimit?: number
+  memoryLtPrompt?: string
   traitMesNumberFT?: number
   traitMesNumber?: number
   traitTemplate?: Record<string, string>
@@ -39,13 +39,16 @@ export const Config = Schema.object({
     .description('短记忆生成用到的消息数量'),
   memoryStMesNumMax: Schema.number()
     .default(10)
-    .description('短记忆保留的条数（只是本地保存的上限）'),
+    .description('短记忆保留的条数'),
   memoryStMesNumUsed: Schema.number()
-    .default(3)
+    .default(5)
     .description('短记忆真实使用的条数（发给AI最近x条）'),
-  memoryLtWordsLimit: Schema.number()
-    .default(300)
-    .description('长期记忆字数上限'),
+  memoryLtMessages: Schema.number()
+    .default(50)
+    .description('长期记忆生成用到的消息数量（或者叫远期记忆，因为只会使用短期记忆已经使用过的消息生成）'),
+  memoryLtPrompt: Schema.string()
+   .default('请根据以下聊天记录，更新旧的长期记忆。只保留重要内容，剔除过时的、存疑的、矛盾的内容。内容要极其简单明了，不要超过500字。请直接返回总结内容，不要添加任何解释或额外信息。')
+   .description('长期记忆生成用到的提示词'),
   traitMesNumberFT: Schema.number()
     .default(6)
     .description('更新特征读取的消息数量(第一次创建时)'),
@@ -786,6 +789,18 @@ export class MemoryTableService extends Service {
             .then(summary => {
               if (summary) {
                 this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成成功。`)
+                // 在短期记忆生成成功时，调用长期记忆生成
+                generateLongTermMemory.call(this, groupChatGroupId)
+                  .then(ltSummary => {
+                    if (ltSummary) {
+                      this.ctx.logger.info(`群聊 ${groupChatGroupId} 长期记忆生成成功。`)
+                    } else {
+                      this.ctx.logger.info(`群聊 ${groupChatGroupId} 长期记忆生成未返回内容或失败。`)
+                    }
+                  })
+                  .catch(error => {
+                    this.ctx.logger.error(`群聊 ${groupChatGroupId} 长期记忆生成出错: ${error.message}`)
+                  })
               } else {
                 this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成未返回内容或失败。`)
               }
@@ -989,6 +1004,92 @@ async function callOpenAI(messages: Array<{ role: string, content: string }>, ma
       // 等待后重试
       await new Promise(resolve => setTimeout(resolve, 1000 * retries));
     }
+  }
+}
+
+//生成长期记忆
+async function generateLongTermMemory(groupId: string): Promise<string> {
+  try {
+    // 获取群聊的记忆条目，user_id 为 '0' 代表群聊的整体记忆
+    const memoryEntry = await this.ctx.database.get('memory_table', {
+      group_id: groupId,
+      user_id: '0'
+    }).then(entries => entries[0])
+
+    if (!memoryEntry) {
+      this.ctx.logger.info(`群聊 ${groupId} 尚无记忆条目，无法生成长期记忆`)
+      return ''
+    }
+
+    // 提取 history 中 used 为 true 的记录
+    const usedHistory = memoryEntry.history.filter(entry => entry.used)
+
+    if (usedHistory.length === 0) {
+      this.ctx.logger.info(`群聊 ${groupId} 没有已使用的短期记忆相关历史记录，无法生成长期记忆`)
+      return ''
+    }
+
+    // 从最早的一条开始取 memoryLtMessages 条
+    const historyForLt = usedHistory.slice(0, this.config.memoryLtMessages)
+
+    if (historyForLt.length === 0) {
+      this.ctx.logger.info(`群聊 ${groupId} 没有足够已使用的历史记录生成长期记忆`)
+      return ''
+    }
+
+    // 格式化消息
+    const formattedHistory = historyForLt.map(entry => {
+      return `${entry.sender_name}: ${entry.content}`
+    }).join('\n')
+
+    let systemContent = this.config.memoryLtPrompt
+    let userContent = `这是相关的聊天记录：\n${formattedHistory}`
+
+    if (memoryEntry.memory_lt && memoryEntry.memory_lt.length > 0) {
+      userContent = `这是旧的长期记忆：\n${memoryEntry.memory_lt.join('\n')}\n\n${userContent}`
+    }
+
+    const messages = [
+      {
+        role: 'system',
+        content: systemContent
+      },
+      {
+        role: 'user',
+        content: userContent
+      }
+    ]
+
+    this.ctx.logger.info(`为群聊 ${groupId} 生成长期记忆，输入信息:`, messages)
+
+    // 调用 OpenAI API 生成长期记忆
+    let newLongTermMemory = await callOpenAI.call(this, messages)
+
+    if (!newLongTermMemory || newLongTermMemory.trim() === '') {
+      this.ctx.logger.warn(`群聊 ${groupId} 生成的长期记忆为空`)
+      return ''
+    }
+
+    // 更新长期记忆，只保留最新的一个
+    const updatedMemoryLt = [newLongTermMemory]
+
+    // 删除已用于生成长期记忆的 history 记录
+    const historyForLtIds = new Set(historyForLt.map(entry => entry.message_id))
+    const updatedHistory = memoryEntry.history.filter(entry => !historyForLtIds.has(entry.message_id))
+
+    // 更新数据库
+    await this.ctx.database.upsert('memory_table', [{
+      ...memoryEntry,
+      memory_lt: updatedMemoryLt,
+      history: updatedHistory
+    }])
+
+    this.ctx.logger.info(`群聊 ${groupId} 的新长期记忆已生成并保存: ${newLongTermMemory}`)
+    return newLongTermMemory
+
+  } catch (error) {
+    this.ctx.logger.error(`为群聊 ${groupId} 生成长期记忆失败: ${error.message}`)
+    return ''
   }
 }
 
