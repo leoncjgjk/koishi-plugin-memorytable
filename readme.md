@@ -1,5 +1,6 @@
 # koishi-plugin-memorytable
 [![npm](https://img.shields.io/npm/v/koishi-plugin-memorytable?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-memorytable)
+
 一个为Koishi机器人提供记忆表格功能的插件。通过该插件，机器人可以记录与用户的聊天历史，并生成用户特征和记忆信息。
 
 ## 功能特点
