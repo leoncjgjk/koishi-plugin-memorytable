@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-memorytable",
-  "version": "1.0.0",
-  "description": "为其他bot插件提供记忆表格功能(暂时只做了特征表格）",
+  "version": "1.0.1",
+  "description": "为其他bot插件提供记忆表格功能(暂时只做了特征表格、短期记忆）",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -22,6 +22,10 @@
   ],
   "peerDependencies": {
     "koishi": "^4.18.7"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "koishi": {
     "description": {
