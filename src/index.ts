@@ -911,14 +911,24 @@ export class MemoryTableService extends Service {
     }
   }
 
-  // 清空本人当前群聊的trait
+  // 清空单人的trait和history
   public async clearTrait(session: Session) {
-    this.ctx.logger.info('清空本人当前群聊的trait')
-    let newEmptyTrait = ""
     const group_id = session.guildId || session.channelId
     const user_id = session.userId || session.author.id
     if(group_id&&user_id){
-      handleSetTrait.call(this, session, newEmptyTrait)
+      let memoryEntry = await this.ctx.database.get('memory_table', {
+        group_id: group_id,
+        user_id: user_id
+      }).then(entries => entries[0])
+
+      if (memoryEntry) {
+        memoryEntry.trait = {}
+        memoryEntry.history = []
+        await this.ctx.database.upsert('memory_table', [memoryEntry])
+        this.ctx.logger.info('清空本人当前群聊的trait和history')
+      }
+    }else{
+      this.ctx.logger.info('未获取到群聊或用户id，清空失败')
     }
   }
 
