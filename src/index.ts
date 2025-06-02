@@ -34,6 +34,9 @@ export const Config = Schema.object({
   model: Schema.string()
     .default('gpt-3.5-turbo')
     .description('使用的模型名称'),
+  enableMemSt: Schema.boolean()
+    .default(true)
+    .description('是否开启短期记忆'),
   memoryStMessages: Schema.number()
     .default(50)
     .description('短记忆生成用到的消息数量'),
@@ -43,6 +46,9 @@ export const Config = Schema.object({
   memoryStMesNumUsed: Schema.number()
     .default(5)
     .description('短记忆真实使用的条数（发给AI最近x条）'),
+  enableMemLt: Schema.boolean()
+    .default(true)
+    .description('是否开启长期记忆(必须先开启短期记忆，否则开了也没用）'),
   memoryLtMessages: Schema.number()
     .default(50)
     .description('长期记忆生成用到的消息数量（或者叫远期记忆，因为只会使用短期记忆已经使用过的消息生成）'),
@@ -780,7 +786,7 @@ export class MemoryTableService extends Service {
       this.ctx.logger.info(`消息已存入群聊 ${groupChatGroupId} 的总记录`)
 
       //生成短期记忆总结
-      if (groupChatGroupId && !this.generatingSummaryFor.has(groupChatGroupId)) {
+      if (groupChatGroupId && !this.generatingSummaryFor.has(groupChatGroupId) && this.config.enableMemSt) {
         const unusedMessagesCount = groupMemoryEntry.history.filter(entry => !entry.used).length
         if (unusedMessagesCount >= this.config.memoryStMessages) {
           this.generatingSummaryFor.add(groupChatGroupId)
@@ -790,7 +796,8 @@ export class MemoryTableService extends Service {
               if (summary) {
                 this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成成功。`)
                 // 在短期记忆生成成功时，调用长期记忆生成
-                generateLongTermMemory.call(this, groupChatGroupId)
+                if(this.config.enableMemLt){
+                  generateLongTermMemory.call(this, groupChatGroupId)
                   .then(ltSummary => {
                     if (ltSummary) {
                       this.ctx.logger.info(`群聊 ${groupChatGroupId} 长期记忆生成成功。`)
@@ -801,6 +808,7 @@ export class MemoryTableService extends Service {
                   .catch(error => {
                     this.ctx.logger.error(`群聊 ${groupChatGroupId} 长期记忆生成出错: ${error.message}`)
                   })
+                }
               } else {
                 this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成未返回内容或失败。`)
               }
