@@ -911,6 +911,17 @@ export class MemoryTableService extends Service {
     }
   }
 
+  // 清空本人当前群聊的trait
+  public async clearTrait(session: Session) {
+    this.ctx.logger.info('清空本人当前群聊的trait')
+    let newEmptyTrait = ""
+    const group_id = session.guildId || session.channelId
+    const user_id = session.userId || session.author.id
+    if(group_id&&user_id){
+      handleSetTrait.call(this, session, newEmptyTrait)
+    }
+  }
+
   // 清空记忆表
   public async clearMem(autoBackup : boolean = true) {
     this.ctx.logger.info('清空记忆表！是否自动备份：',autoBackup)
@@ -1345,7 +1356,7 @@ async function getLikeRankings(memoryEntries) {
 // 设置用户特征的工具函数，指令用
 async function handleSetTrait(this: MemoryTableService, session: Session, trait: string, groupid?: number, userid?: number) {
   const groupId = String(groupid === undefined ? session.guildId || session.channelId || '0' : groupid)
-  const userId = String(userid === undefined ? session.userId : userid)
+  const userId = String(userid === undefined ? session.userId || session.author.id: userid)
 
   try {
     // 尝试解析为JSON格式
