@@ -68,3 +68,7 @@
 - `session`: 当前会话的 Session 对象。
 - `content`: 消息内容。
 - `authID`: 要回复的用户ID。
+
+### API：clearMem(autoBackup : boolean = true)
+清除当前所有记忆数据。
+- `autoBackup`: 是否自动备份记忆数据，默认为 `true`。

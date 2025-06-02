@@ -420,29 +420,7 @@ export class MemoryTableService extends Service {
     ctx.command('mem.backup',{ authority: 2 })
 			.userFields(['authority'])
       .action(async () => {
-        try {
-          // 创建backup文件夹
-          const backupDir = path.join(__dirname, '..', 'backup')
-          if (!fs.existsSync(backupDir)) {
-            fs.mkdirSync(backupDir, { recursive: true })
-          }
-
-          // 获取所有记忆表数据
-          const allMemoryData = await this.ctx.database.get('memory_table', {})
-
-          // 生成带时间戳的文件名
-          const date = new Date()
-          const timestamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}-${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}-${String(date.getSeconds()).padStart(2, '0')}`
-          const backupFile = path.join(backupDir, `memory_backup_${timestamp}.json`)
-
-          // 将数据写入文件
-          fs.writeFileSync(backupFile, JSON.stringify(allMemoryData, null, 2))
-
-          return `备份成功：${path.basename(backupFile)}`
-        } catch (error) {
-          this.ctx.logger.error(`备份失败: ${error.message}`)
-          return '备份失败，请查看日志了解详细信息'
-        }
+        return this.backupMem()
       })
 
     // 添加恢复指令
@@ -561,6 +539,33 @@ export class MemoryTableService extends Service {
     //   }
     // })
 	}
+
+  // 备份记忆表
+  private async backupMem() {
+    try {
+      // 创建backup文件夹
+      const backupDir = path.join(__dirname, '..', 'backup')
+      if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true })
+      }
+
+      // 获取所有记忆表数据
+      const allMemoryData = await this.ctx.database.get('memory_table', {})
+
+      // 生成带时间戳的文件名
+      const date = new Date()
+      const timestamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}-${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}-${String(date.getSeconds()).padStart(2, '0')}`
+      const backupFile = path.join(backupDir, `memory_backup_${timestamp}.json`)
+
+      // 将数据写入文件
+      fs.writeFileSync(backupFile, JSON.stringify(allMemoryData, null, 2))
+
+      return `备份成功：${path.basename(backupFile)}`
+    } catch (error) {
+      this.ctx.logger.error(`备份失败: ${error.message}`)
+      return '备份失败，请查看日志了解详细信息'
+    }
+  }
   	// 处理oob回传机器人消息
 	private async handleMessageBotOob(session: Session, content: string , authID:string) {
     //将消息存在群聊数据中
@@ -904,6 +909,17 @@ export class MemoryTableService extends Service {
         await generateTrait.call(this, user_id, group_id,session)
       }
     }
+  }
+
+  // 清空记忆表
+  public async clearMem(autoBackup : boolean = true) {
+    this.ctx.logger.info('清空记忆表！是否自动备份：',autoBackup)
+    if(autoBackup){
+      await this.backupMem()
+    }
+    await this.ctx.database.remove('memory_table', {})
+    this.ctx.logger.info('记忆表已清空')
+    return '记忆表已清空'
   }
 
   // 传入机器人消息
