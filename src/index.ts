@@ -70,6 +70,9 @@ export const Config = Schema.intersect([
   memoryStMesNumUsed: Schema.number()
     .default(5)
     .description('短记忆真实使用的条数（发给AI最近x条）'),
+  memoryStPrompt: Schema.string()
+    .default('你是一个聊天记录总结助手，你的任务是根据提供的聊天记录和之前的总结，生成一段新的、简洁的聊天记录总结，记录发生的事情和其中主要人物的行为，而且新的总结不要和之前的总结重复。请直接返回总结内容，不要添加任何解释')
+    .description('短期记忆生成用到的提示词'),
   enableMemLt: Schema.boolean()
     .default(true)
     .description('是否开启长期记忆(必须先开启短期记忆，否则开了也没用）'),
@@ -77,7 +80,7 @@ export const Config = Schema.intersect([
     .default(50)
     .description('长期记忆生成用到的消息数量（或者叫远期记忆，因为只会使用短期记忆已经使用过的消息生成）'),
   memoryLtPrompt: Schema.string()
-  .default('请根据以下聊天记录，更新旧的长期记忆。只保留重要内容，剔除过时的、存疑的、矛盾的内容。内容要极其简单明了，不要超过500字。请直接返回总结内容，不要添加任何解释或额外信息。')
+  .default('请根据以下聊天记录，更新旧的长期记忆。只保留重要内容，剔除过时的、存疑的、矛盾的内容，不要捏造信息。内容要极其简单明了，不要超过500字。请直接返回总结内容，不要添加任何解释或额外信息。')
   .description('长期记忆生成用到的提示词'),
   }).description('群聊记忆设置'),
   Schema.object({
@@ -1063,7 +1066,7 @@ export class MemoryTableService extends Service {
         this.ctx.logger.info(`用户 ${userId} 在群组 ${actualGroupId} 中没有相关记忆`);
         return '';
       }
-      this.ctx.logger.info(`用户 ${userId} 在群组 ${actualGroupId} 中获取到的记忆信息：`, result);
+      //this.ctx.logger.info(`用户 ${userId} 在群组 ${actualGroupId} 中获取到的记忆信息：`, result);
       return result;
     } catch (error) {
       this.ctx.logger.error(`获取记忆信息失败: ${error.message}`);
@@ -1169,7 +1172,7 @@ async function generateLongTermMemory(groupId: string): Promise<string> {
       }
     ]
 
-    this.ctx.logger.info(`为群聊 ${groupId} 生成长期记忆，输入信息:`, messages)
+    //this.ctx.logger.info(`为群聊 ${groupId} 生成长期记忆，输入信息:`, messages)
 
     // 调用 OpenAI API 生成长期记忆
     let newLongTermMemory = await callOpenAI.call(this, messages)
@@ -1234,13 +1237,11 @@ async function generateSummary(groupId: string): Promise<string> {
       return `${entry.sender_name}: ${entry.content}`
     }).join('\n')
 
-    let systemContent = '你是一个聊天记录总结助手，你的任务是根据提供的聊天记录和之前的总结，生成一段新的、简洁的聊天记录总结，不需要细枝末节的描写，而且新的总结不要和之前的总结重复。请直接返回总结内容，不要添加任何解释或额外信息。'
+    let systemContent = this.config.memoryStPrompt
     let userContent = `这是最近的聊天记录：\n${formattedHistory}\n\n请根据以上信息，生成新的聊天记录总结。`
 
     if (recentMemorySt.length > 0) {
       userContent = `这是之前的几条总结：\n${recentMemorySt.join('\n')}\n\n${userContent}`
-    } else {
-      systemContent = '你是一个聊天记录总结助手，你的任务是根据提供的聊天记录，生成一段新的、简洁的聊天记录总结，不需要细枝末节的描写，而且新的总结不要和之前的总结重复。请直接返回总结内容，不要添加任何解释或额外信息。'
     }
 
     const messages = [
@@ -1254,7 +1255,7 @@ async function generateSummary(groupId: string): Promise<string> {
       }
     ]
 
-    this.ctx.logger.info(`为群聊 ${groupId} 生成总结，输入信息:`, messages)
+    //this.ctx.logger.info(`为群聊 ${groupId} 生成总结，输入信息:`, messages)
 
     // 调用 OpenAI API 生成总结
     let summary = await callOpenAI.call(this, messages)
