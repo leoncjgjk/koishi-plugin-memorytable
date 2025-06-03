@@ -17,6 +17,7 @@ export interface Config {
   traitMesNumberFT?: number
   traitMesNumber?: number
   traitTemplate?: Record<string, string>
+  traitCacheNum?: number
   botMesReport?: boolean
   debugMode?: boolean
 }
@@ -70,6 +71,9 @@ export const Config = Schema.object({
       '好感度': '用-100到100的数字表示机器人对用户的好感度',
       '事件':'总结一下机器人和用户之间发生过的印象深刻的事情，不超过50个字'
     }),
+  traitCacheNum: Schema.number()
+   .default(0)
+   .description('特征缓存条数(额外发送最近几个人的特征信息。默认为0，代表只发送当前消息对象的特征信息。)'),
   botMesReport: Schema.boolean()
    .default(false)
    .description('是否已开启机器人聊天上报（不知道的开了也没用）'),
@@ -956,56 +960,108 @@ export class MemoryTableService extends Service {
   // 获取用户记忆信息
   public async getMem(userId: string, groupId: string): Promise<string | Record<string, any>> {
     this.ctx.logger.info('进入getMem函数')
-
     try {
       const actualGroupId = groupId === '0' ? `private:${userId}` : groupId;
-
-      const traitMemoryEntry = await this.ctx.database.get('memory_table', {
-        group_id: actualGroupId,
-        user_id: userId
-      }).then(entries => entries[0]);
-
-      const sharedMemoryEntry = await this.ctx.database.get('memory_table', {
-        group_id: actualGroupId,
-        user_id: '0' // user_id 为 '0' 代表群聊总记录
-      }).then(entries => entries[0]);
+      const [traitMemoryEntry, sharedMemoryEntry] = await Promise.all([
+        this.ctx.database.get('memory_table', {
+          group_id: actualGroupId,
+          user_id: userId
+        }).then(entries => entries[0]),
+        this.ctx.database.get('memory_table', {
+          group_id: actualGroupId,
+          user_id: '0' // 群聊总记录
+        }).then(entries => entries[0])
+      ]);
 
       const result: Record<string, any> = {};
+      const allTraits: Record<string, any> = {};
 
-      if (traitMemoryEntry && traitMemoryEntry.trait && Object.keys(traitMemoryEntry.trait).length > 0) {
-        result.trait = Object.fromEntries(
-          Object.entries(traitMemoryEntry.trait).map(([key, value]) => [
+      // 统一处理trait格式化的函数
+      const formatTrait = (trait: Record<string, any>) => {
+        return Object.fromEntries(
+          Object.entries(trait).map(([key, value]) => [
             key,
             String(value).replace(/用户/g, '对方').replace(/机器人/g, '我')
           ])
         );
+      };
+
+      // 处理当前用户的trait
+      if (traitMemoryEntry?.trait && Object.keys(traitMemoryEntry.trait).length > 0) {
+        const formattedTrait = formatTrait(traitMemoryEntry.trait);
+        const currentUserMessage = sharedMemoryEntry?.history?.find(msg => msg.sender_id === userId);
+        const currentUserName = currentUserMessage?.sender_name || `用户${userId}`;
+        allTraits[`${currentUserName}(${userId})`] = formattedTrait;
+        result.trait = formattedTrait; // 保持原有trait字段
       }
 
-      if (sharedMemoryEntry && sharedMemoryEntry.memory_st && sharedMemoryEntry.memory_st.length > 0) {
-        // 只取最近的memoryStMesNumUsed条记录
+      // 处理其他用户的trait (仅当traitCacheNum > 0时)
+      if (this.config.traitCacheNum > 0 && sharedMemoryEntry?.history) {
+        this.ctx.logger.info('开始处理其他用户的trait')
+
+        const cachedUsers: { id: string; name: string; trait: Record<string, any> }[] = [];
+        const addedUserIds = new Set<string>();
+
+        // 倒序遍历群聊历史记录
+        for (let i = sharedMemoryEntry.history.length - 1; i >= 0; i--) {
+          const message = sharedMemoryEntry.history[i];
+          const senderId = message.sender_id;
+
+          // 跳过当前用户和已添加用户
+          if (senderId === userId || addedUserIds.has(senderId)) continue;
+
+          // 获取用户trait
+          const senderMemoryEntry = await this.ctx.database.get('memory_table', {
+            group_id: actualGroupId,
+            user_id: senderId
+          }).then(entries => entries[0]);
+
+          if (senderMemoryEntry?.trait && Object.keys(senderMemoryEntry.trait).length > 0) {
+            cachedUsers.push({
+              id: senderId,
+              name: message.sender_name,
+              trait: senderMemoryEntry.trait,
+            });
+            addedUserIds.add(senderId);
+
+            // 达到缓存数量上限则停止
+            if (cachedUsers.length >= this.config.traitCacheNum) break;
+          }
+        }
+
+        // 格式化并添加其他用户trait
+        cachedUsers.forEach(user => {
+          allTraits[`${user.name}(${user.id})`] = formatTrait(user.trait);
+        });
+      }
+
+      result.traits = allTraits;
+
+      // 处理短期记忆
+      if (sharedMemoryEntry?.memory_st?.length > 0) {
         result.memory_st = sharedMemoryEntry.memory_st
           .slice(-this.config.memoryStMesNumUsed)
-          .map(memory => memory.replace(/用户/g, '对方').replace(/机器人/g, '我'));
+          .map(memory => memory.replace(/机器人/g, '我'));
       }
 
-      if (sharedMemoryEntry && sharedMemoryEntry.memory_lt && sharedMemoryEntry.memory_lt.length > 0) {
+      // 处理长期记忆
+      if (sharedMemoryEntry?.memory_lt?.length > 0) {
         result.memory_lt = sharedMemoryEntry.memory_lt.map(memory =>
-          memory.replace(/用户/g, '对方').replace(/机器人/g, '我')
+          memory.replace(/机器人/g, '我')
         );
       }
 
       if (Object.keys(result).length === 0) {
-        this.ctx.logger.info(`用户 ${userId} (traits) 或短期/长期在群组 ${actualGroupId} 中没有相关记忆`);
+        this.ctx.logger.info(`用户 ${userId} 在群组 ${actualGroupId} 中没有相关记忆`);
         return '';
       }
-
+      this.ctx.logger.info(`用户 ${userId} 在群组 ${actualGroupId} 中获取到的记忆信息：`, result);
       return result;
     } catch (error) {
       this.ctx.logger.error(`获取记忆信息失败: ${error.message}`);
       return '';
     }
   }
-
 }
 
   // 调用OpenAI API的工具函数
