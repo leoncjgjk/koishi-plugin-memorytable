@@ -22,20 +22,43 @@ export interface Config {
   debugMode?: boolean
 }
 
-export const Config = Schema.object({
-  maxMessages: Schema.number()
-    .default(20)
-    .description('每个聊天对象保存的聊天记录(单群）'),
-  apiEndpoint: Schema.string()
-    .default('https://api.openai.com/v1/chat/completions')
-    .description('OpenAI兼容API的端点URL'),
-  apiKey: Schema.string()
-    .role('secret')
-    .description('OpenAI API密钥'),
-  model: Schema.string()
-    .default('gpt-3.5-turbo')
-    .description('使用的模型名称'),
-  enableMemSt: Schema.boolean()
+export const Config = Schema.intersect([
+  Schema.object({
+    maxMessages: Schema.number()
+      .default(20)
+      .description('每个聊天对象保存的聊天记录(单群）'),
+    apiEndpoint: Schema.string()
+      .default('https://api.openai.com/v1/chat/completions')
+      .description('OpenAI兼容API的端点URL'),
+    apiKey: Schema.string()
+      .role('secret')
+      .description('OpenAI API密钥'),
+    model: Schema.string()
+      .default('gpt-3.5-turbo')
+      .description('使用的模型名称')
+  }).description('基础设置'),
+  Schema.object({
+    traitMesNumberFT: Schema.number()
+      .default(6)
+      .description('更新特征读取的消息数量(第一次创建时)'),
+    traitMesNumber: Schema.number()
+      .default(10)
+      .description('更新特征读取的消息数量（后续更新）'),
+    traitTemplate: Schema.dict(Schema.string())
+      .description('特征模板，键为特征项，值为提示词')
+      .default({
+        '称呼': '机器人应该如何称呼用户？',
+        '性别': '只允许填：未知/男/女',
+        '印象': '总结一下机器人对用户的印象和看法,用形容词，不超过20个字',
+        '好感度': '用-100到100的数字表示机器人对用户的好感度',
+        '事件':'总结一下机器人和用户之间发生过的印象深刻的事情，不超过50个字'
+      }),
+    traitCacheNum: Schema.number()
+    .default(0)
+    .description('特征缓存条数(额外发送最近几个人的特征信息。默认为0，代表只发送当前消息对象的特征信息。)')
+  }).description('单人特征信息设置'),
+  Schema.object({
+    enableMemSt: Schema.boolean()
     .default(true)
     .description('是否开启短期记忆'),
   memoryStMessages: Schema.number()
@@ -54,33 +77,18 @@ export const Config = Schema.object({
     .default(50)
     .description('长期记忆生成用到的消息数量（或者叫远期记忆，因为只会使用短期记忆已经使用过的消息生成）'),
   memoryLtPrompt: Schema.string()
-   .default('请根据以下聊天记录，更新旧的长期记忆。只保留重要内容，剔除过时的、存疑的、矛盾的内容。内容要极其简单明了，不要超过500字。请直接返回总结内容，不要添加任何解释或额外信息。')
-   .description('长期记忆生成用到的提示词'),
-  traitMesNumberFT: Schema.number()
-    .default(6)
-    .description('更新特征读取的消息数量(第一次创建时)'),
-  traitMesNumber: Schema.number()
-    .default(10)
-    .description('更新特征读取的消息数量（后续更新）'),
-  traitTemplate: Schema.dict(Schema.string())
-    .description('特征模板，键为特征项，值为提示词')
-    .default({
-      '称呼': '机器人应该如何称呼用户？',
-      '性别': '只允许填：未知/男/女',
-      '印象': '总结一下机器人对用户的印象和看法,用形容词，不超过20个字',
-      '好感度': '用-100到100的数字表示机器人对用户的好感度',
-      '事件':'总结一下机器人和用户之间发生过的印象深刻的事情，不超过50个字'
-    }),
-  traitCacheNum: Schema.number()
-   .default(0)
-   .description('特征缓存条数(额外发送最近几个人的特征信息。默认为0，代表只发送当前消息对象的特征信息。)'),
-  botMesReport: Schema.boolean()
-   .default(false)
-   .description('是否已开启机器人聊天上报（不知道的开了也没用）'),
-  debugMode: Schema.boolean()
-   .default(false)
-   .description('是否开启调试模式')
-})
+  .default('请根据以下聊天记录，更新旧的长期记忆。只保留重要内容，剔除过时的、存疑的、矛盾的内容。内容要极其简单明了，不要超过500字。请直接返回总结内容，不要添加任何解释或额外信息。')
+  .description('长期记忆生成用到的提示词'),
+  }).description('群聊记忆设置'),
+  Schema.object({
+    botMesReport: Schema.boolean()
+     .default(false)
+     .description('是否已开启机器人聊天上报（不知道的开了也没用）'),
+    debugMode: Schema.boolean()
+     .default(false)
+     .description('是否开启调试模式')
+  }).description('高级设置')
+])
 
 // 定义数据库表结构
 declare module 'koishi' {
