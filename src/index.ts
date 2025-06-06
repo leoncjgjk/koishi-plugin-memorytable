@@ -135,6 +135,8 @@ export class MemoryTableService extends Service {
 		if (content.trim().startsWith('mem')) {
 			return ''
 		}
+    content = this.replaceUrlsWithSiteNames(content)
+
 		return content
 			.replace(/<img[^>]*\/>/g, '[图片]')
 			.replace(/<json[^>]*\/>/g, '')
@@ -144,8 +146,38 @@ export class MemoryTableService extends Service {
 			.replace(/<mface[^>]*\/>/g, '')
 			.replace(/<face[^>]*>.*?<\/face>/g, '')
 			.replace(/<at[^>]*id="([^"]+)".*?\/>/g, '@$1 ')
+			//.replace(/^[a-zA-Z]+:\/\/[^\s]+$/g, '[链接]')
 			.trim()
 	}
+
+  // 匹配URL
+  private replaceUrlsWithSiteNames(text) {
+    const urlRegex = /(?:https?|ftp):\/\/[^\s/$.?#]+\.[^\s]*|\bwww\.[^\s]+\.[^\s]*|\b[a-z0-9-]+\.[a-z]{2,}\b(?:\/[^\s]*)?/gi;
+    return text.replace(urlRegex, (url) => {
+        try {
+            // 提取域名部分
+            let domain;
+            if (url.startsWith('www.')) {
+                domain = url.split('/')[0];  // 处理www开头的URL
+            } else {
+                const urlObj = new URL(url.startsWith('http') ? url : `http://${url}`);
+                domain = urlObj.hostname;
+            }
+
+            const domainParts = domain.split('.');
+            let siteName = domainParts[domainParts.length - 2];  // 提取网站名,通常取倒数第二部分
+
+            // 处理特殊情况（如.co.uk等双后缀域名）
+            const tlds = ['co', 'com', 'org', 'net', 'edu', 'gov', 'ac']; // 常见二级后缀
+            if (domainParts.length > 2 && tlds.includes(domainParts[domainParts.length - 2])) {
+                siteName = domainParts[domainParts.length - 3];
+            }
+            return `[${siteName}的链接]`;
+        } catch (e) {
+            return url;
+        }
+    });
+  }
 
 	static inject = ['database']
 
@@ -874,7 +906,7 @@ export class MemoryTableService extends Service {
 		let content = this.filterMessageContent(session.content)
 
 		// 如果消息内容为空，则不处理
-		if (!content) return
+		if (content=='') return
 
 		// 构建消息记录
 		const messageEntry: MessageEntry = {
