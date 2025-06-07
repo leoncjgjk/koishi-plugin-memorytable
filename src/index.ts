@@ -4,6 +4,19 @@ import * as path from 'path'
 
 // 扩展Koishi事件系统以支持机器人消息事件
 export const name = 'memorytable'
+export const usage = `
+### 本插件为Koishi机器人提供长期记忆功能，已适配的是koishi-plugin-oobabooga-testbot。其他机器人插件可自行调用getMem函数使用。
+
+## 最近3个版本的更新日志：
+### v1.2.3
+- 优化设置选项及默认设置。
+- 长短期记忆优化开关功能。
+- （实验性）对聊天记录中的url进行简化
+### v1.2.2
+- 开放短期记忆的自定义配置
+### v1.2.1
+- 优化设置分类
+`
 
 export interface Config {
   maxMessages?: number
