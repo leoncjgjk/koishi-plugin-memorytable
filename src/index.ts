@@ -2,20 +2,21 @@ import { Context, Schema, Session, Service, h } from 'koishi'
 import * as fs from 'fs'
 import * as path from 'path'
 
+let extraKBs = []
 // 扩展Koishi事件系统以支持机器人消息事件
 export const name = 'memorytable'
 export const usage = `
 ### 本插件为Koishi机器人提供长期记忆功能，已适配的是koishi-plugin-oobabooga-testbot。其他机器人插件可自行调用getMem函数使用。
 
 ## 最近3个版本的更新日志：
+### v1.3.1
+- （实验性）增加知识库功能，可额外配置关键词触发知识库查询。
 ### v1.3.0
 - （实验性）增加机器人人设功能，在生成记忆时可以基于机器人视角分析。
 ### v1.2.3
 - 优化设置选项及默认设置。
 - 长短期记忆优化开关功能。
 - （实验性）对聊天记录中的url进行简化
-### v1.2.2
-- 开放短期记忆的自定义配置
 `
 
 export interface Config {
@@ -42,6 +43,10 @@ export interface Config {
   botPrompt?: string
   memoryStUseBotPrompt?: boolean
   memoryLtUseBotPrompt?: boolean
+  enableExtraKB?: boolean
+  knowledgeBooks?: Record<string, string>
+  KBExtraPath?: string
+  KBMaxNum?: number
 }
 
 export const Config = Schema.intersect([
@@ -118,15 +123,39 @@ export const Config = Schema.intersect([
     memoryLtPrompt: Schema.string()
       .default('请根据以下聊天记录，更新旧的长期记忆。只保留重要内容，剔除过时的、存疑的、矛盾的内容，不要捏造信息。内容要极其简单明了，不要超过500字。请直接返回总结内容，不要添加任何解释或额外信息。')
       .description('长期记忆生成用到的提示词'),
-    memoryLtUseBotPrompt: Schema.boolean().experimental()
+    memoryLtUseBotPrompt: Schema.boolean()
       .default(true)
       .description('生成长期记忆时，是否使用机器人人设（botPrompt）。')
   }).description('功能3：长期记忆设置'),
   Schema.object({
-    botMesReport: Schema.boolean().experimental()
+    enableKB: Schema.boolean().experimental()
+     .default(false)
+     .description('是否开启知识库功能'),
+    knowledgeBooks: Schema.array(Schema.object(
+      {
+        keyword: Schema.string().required(),
+        content: Schema.string().required()
+      }
+    )).experimental()
+    .role('table')
+    .description('知识库，键为关键词，值为内容。（关键词可以用逗号隔开，当收到消息中匹配到任意一个关键词，则将对应的内容作为知识库发送给AI。可用于人设补充等。）')
+    .default([{keyword: "酒馆,ST",content: "SillyTavern"}]
+    ),
+    enableExtraKB: Schema.boolean().experimental()
+    .default(false)
+    .description('是否开启额外的知识库功能'),
+    KBExtraPath: Schema.string().experimental()
+      .default('')
+      .description('额外的知识库路径的目录，填绝对路径。插件会从该目录下的json文件和txt文件中检查，内容格式为{"关键词": "内容"}'),
+    KBMaxNum: Schema.number().experimental()
+     .default(5)
+     .description('同时触发知识库的最大条目数')
+  }).description('功能4：知识库设置'),
+  Schema.object({
+    botMesReport: Schema.boolean()
      .default(false)
      .description('是否已开启机器人聊天上报（不知道的开了也没用）'),
-    debugMode: Schema.boolean().experimental()
+    debugMode: Schema.boolean()
      .default(false)
      .description('是否开启调试模式')
   }).description('高级设置')
@@ -1040,7 +1069,7 @@ export class MemoryTableService extends Service {
   }
 
   // 获取用户记忆信息
-  public async getMem(userId: string, groupId: string): Promise<string | Record<string, any>> {
+  public async getMem(userId: string, groupId: string, session?): Promise<string | Record<string, any>> {
     this.ctx.logger.info('进入getMem函数')
     try {
       const actualGroupId = groupId === '0' ? `private:${userId}` : groupId;
@@ -1131,6 +1160,52 @@ export class MemoryTableService extends Service {
         result.memory_lt = sharedMemoryEntry.memory_lt.map(memory =>
           memory.replace(/机器人/g, '我')
         );
+      }
+
+      //处理知识库
+      if (this.config.enableKB && session?.content) {
+        if(this.config.knowledgeBooks !== '' || extraKBs.length > 0){
+          // 合并配置的知识库和额外知识库
+          const kbs = [...this.config.knowledgeBooks, ...extraKBs];
+          const resultKbs = [];
+          const seenKeywords = new Set();
+
+          for (const kb of kbs) {
+            if (!kb.keyword || !kb.keyword.trim()) continue;
+
+            if (typeof kb.keyword === 'string' && kb.keyword.includes(',')) {
+              const keywords = kb.keyword.split(',')
+                .map(s => s.trim())
+                .filter(s => s.length > 0);
+
+              // 查找第一个匹配的关键词
+              let matchedKeyword = null;
+              for (const subKeyword of keywords) {
+                const lowerKey = subKeyword.toLowerCase();
+                if (session.content.toLowerCase().includes(lowerKey) && !seenKeywords.has(lowerKey)) {
+                  matchedKeyword = subKeyword;
+                  seenKeywords.add(lowerKey);
+                  break; // 找到第一个匹配后立即跳出
+                }
+              }
+
+              if (matchedKeyword) {
+                resultKbs.push({ [matchedKeyword]: kb.content });
+                continue; // 跳过后续处理
+              }
+            } else {
+              if (session.content.toLowerCase().includes(kb.keyword.toLowerCase()) && !seenKeywords.has(kb.keyword.toLowerCase())) {
+                resultKbs.push({ [kb.keyword]: kb.content });
+                seenKeywords.add(kb.keyword.toLowerCase());
+              }
+            }
+          }
+          if (resultKbs.length > 0) {
+            result.kbs = resultKbs;
+          }
+        }else{
+          this.ctx.logger.info('开启了知识库，但内容为空，跳过处理')
+        }
       }
 
       if (Object.keys(result).length === 0) {
@@ -1510,6 +1585,49 @@ async function getLikeRankings(memoryEntries) {
         })
 }
 
+
+// 从文件中提取知识库
+async function extractKBsFromFile(config,ctx): Promise<Array<{ keyword: string, content: string }>> {
+  if(!config.enableExtraKB){
+    return []
+  }
+  ctx.logger.info(`开始处理额外知识库`)
+  const kbs = []
+  const kbPath = config.KBExtraPath
+  if (!kbPath || !fs.existsSync(kbPath)) {
+    ctx.logger.error(`未找到知识库文件路径: ${kbPath}`)
+    return kbs
+  }
+  try {
+    // 遍历目录获取文件列表
+    const files = fs.readdirSync(kbPath)
+      .filter(f => f.endsWith('.json') || f.endsWith('.txt'))
+      .map(f => path.join(kbPath, f))
+    if(files.length === 0){
+      ctx.logger.error(`配置的目录下未找到json或txt文件`)
+      return kbs
+    }
+    // 处理每个文件
+    for (const file of files) {
+      try {
+        const content = fs.readFileSync(file, 'utf8')
+        const data = JSON.parse(content)
+        for (const [keyword, value] of Object.entries(data)) {
+          kbs.push({ keyword, content: String(value) })
+        }
+      } catch (error) {
+        ctx.logger.error(`处理文件 ${file} 时出错: ${error.message}`)
+      }
+    }
+    ctx.logger.info(`额外知识库处理完成，共从${files.length}个文件中获得${kbs.length}条数据`)
+    return kbs
+  }
+  catch (error) {
+    ctx.logger.error(`提取知识库失败: ${error.message}`)
+    return kbs
+  }
+}
+
 // 设置用户特征的工具函数，指令用
 async function handleSetTrait(this: MemoryTableService, session: Session, trait: string, groupid?: number, userid?: number) {
   const groupId = String(groupid === undefined ? session.guildId || session.channelId || '0' : groupid)
@@ -1577,7 +1695,8 @@ async function handleSetTrait(this: MemoryTableService, session: Session, trait:
 }
 
 // 导出插件
-export function apply(ctx: Context, config: Config) {
+export async function apply(ctx: Context, config: Config) {
   // 直接创建服务实例
   ctx.plugin(MemoryTableService, config)
+  extraKBs = await extractKBsFromFile(config,ctx)
 }
