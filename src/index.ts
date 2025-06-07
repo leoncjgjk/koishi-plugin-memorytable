@@ -8,14 +8,14 @@ export const usage = `
 ### 本插件为Koishi机器人提供长期记忆功能，已适配的是koishi-plugin-oobabooga-testbot。其他机器人插件可自行调用getMem函数使用。
 
 ## 最近3个版本的更新日志：
+### v1.3.0
+- （实验性）增加机器人人设功能，在生成记忆时可以基于机器人视角分析。
 ### v1.2.3
 - 优化设置选项及默认设置。
 - 长短期记忆优化开关功能。
 - （实验性）对聊天记录中的url进行简化
 ### v1.2.2
 - 开放短期记忆的自定义配置
-### v1.2.1
-- 优化设置分类
 `
 
 export interface Config {
@@ -27,6 +27,7 @@ export interface Config {
   enableMemStApi?: boolean
   memoryStMessages?: number
   memoryStMesNumMax?: number
+  memoryStPrompt?: string
   memoryStMesNumUsed?: number
   enableMemLt?: boolean
   enableMemLtApi?: boolean
@@ -38,6 +39,9 @@ export interface Config {
   traitCacheNum?: number
   botMesReport?: boolean
   debugMode?: boolean
+  botPrompt?: string
+  memoryStUseBotPrompt?: boolean
+  memoryLtUseBotPrompt?: boolean
 }
 
 export const Config = Schema.intersect([
@@ -73,7 +77,10 @@ export const Config = Schema.intersect([
       }),
     traitCacheNum: Schema.number()
       .default(0)
-      .description('特征缓存条数(额外发送最近几个人的特征信息。默认为0，代表只发送当前消息对象的特征信息。)')
+      .description('特征缓存条数(额外发送最近几个人的特征信息。默认为0，代表只发送当前消息对象的特征信息。)'),
+    botPrompt: Schema.string().experimental()
+     .default('')
+     .description('机器人的人设,用于生成记忆时增加主观性。留空则为第三方客观视角。'),
   }).description('功能1：特征信息设置'),
   Schema.object({
     enableMemSt: Schema.boolean()
@@ -94,6 +101,9 @@ export const Config = Schema.intersect([
     memoryStPrompt: Schema.string()
       .default('你是一个聊天记录总结助手，你的任务是根据提供的聊天记录和之前的总结，生成一段新的、简洁的聊天记录总结，记录发生的事情和其中主要人物的行为，而且新的总结不要和之前的总结重复。请直接返回总结内容，不要添加任何解释')
       .description('短期记忆生成用到的提示词'),
+    memoryStUseBotPrompt: Schema.boolean().experimental()
+    .default(true)
+    .description('生成短期记忆时，是否使用机器人人设（botPrompt）。')
   }).description('功能2：短期记忆设置'),
   Schema.object({
     enableMemLt: Schema.boolean()
@@ -108,6 +118,9 @@ export const Config = Schema.intersect([
     memoryLtPrompt: Schema.string()
       .default('请根据以下聊天记录，更新旧的长期记忆。只保留重要内容，剔除过时的、存疑的、矛盾的内容，不要捏造信息。内容要极其简单明了，不要超过500字。请直接返回总结内容，不要添加任何解释或额外信息。')
       .description('长期记忆生成用到的提示词'),
+    memoryLtUseBotPrompt: Schema.boolean().experimental()
+      .default(true)
+      .description('生成长期记忆时，是否使用机器人人设（botPrompt）。')
   }).description('功能3：长期记忆设置'),
   Schema.object({
     botMesReport: Schema.boolean().experimental()
@@ -1213,6 +1226,9 @@ async function generateLongTermMemory(groupId: string): Promise<string> {
     }).join('\n')
 
     let systemContent = this.config.memoryLtPrompt
+    if(this.config.botPrompt!==''){
+      systemContent = systemContent + '\n以下是该机器人的人设，请代入此人设的视角进行分析：<机器人人设>' + this.config.botPrompt + '</机器人人设>'
+    }
     let userContent = `这是相关的聊天记录：\n${formattedHistory}`
 
     if (memoryEntry.memory_lt && memoryEntry.memory_lt.length > 0) {
@@ -1296,6 +1312,9 @@ async function generateSummary(groupId: string): Promise<string> {
     }).join('\n')
 
     let systemContent = this.config.memoryStPrompt
+    if(this.config.botPrompt!==''){
+      systemContent = systemContent + '\n以下是该机器人的人设，请代入此人设的视角进行分析：<机器人人设>' + this.config.botPrompt + '</机器人人设>'
+    }
     let userContent = `这是最近的聊天记录：\n${formattedHistory}\n\n请根据以上信息，生成新的聊天记录总结。`
 
     if (recentMemorySt.length > 0) {
@@ -1391,10 +1410,14 @@ async function generateTrait(userId: string, groupId: string,session:Session): P
 
     // 为每个特征项生成内容
     let trait: Record<string, string> = {}
+    let roleContent = Object.keys(memoryEntry.trait).length > 0 ?
+    '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。当前已有特征信息，请基于现有特征进行分析。如果没有充分的聊天记录依据，请保持原有特征不变。请按照特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' :
+    '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。请按照提供的特征模板进行分析，并以JSON格式返回结果，不需要解释理由。'
+    if(this.config.botPrompt!==''){
+      roleContent = roleContent + '\n以下是该机器人的人设，请代入此人设的视角进行分析：<机器人人设>' + this.config.botPrompt + '</机器人人设>'
+    }
     const messages = [
-      { role: 'system', content: Object.keys(memoryEntry.trait).length > 0 ?
-        '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。当前已有特征信息，请基于现有特征进行分析。如果没有充分的聊天记录依据，请保持原有特征不变。请按照特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' :
-        '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。请按照提供的特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' },
+      { role: 'system', content: roleContent },
       { role: 'user', content: `聊天记录（其中用户的id是${userId}，机器人的id是${session.bot.selfId}，你要分析的是用户的特征，请注意分辨）：
 ${formattedHistory}
 ${Object.keys(memoryEntry.trait).length > 0 ? `当前特征：
@@ -1402,6 +1425,7 @@ ${JSON.stringify(memoryEntry.trait, null, 2)}
 ` : ''}特征模板：
 ${JSON.stringify(this.config.traitTemplate, null, 2)}` }
     ]
+
     this.ctx.logger.info('记忆分析：',messages)
 
     try {
