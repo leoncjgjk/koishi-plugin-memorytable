@@ -9,8 +9,9 @@ export const usage = `
 ### 本插件为Koishi机器人提供长期记忆功能，已适配的是koishi-plugin-oobabooga-testbot。其他机器人插件可自行调用getMem函数使用。
 
 ## 最近3个版本的更新日志：
-### v1.3.1
-- （实验性）增加知识库功能，可额外配置关键词触发知识库查询。
+### v1.3.3
+- 增加知识库功能，可额外配置关键词触发知识库查询。
+- 支持额外知识库文件的配置。
 ### v1.3.0
 - （实验性）增加机器人人设功能，在生成记忆时可以基于机器人视角分析。
 ### v1.2.3
@@ -47,6 +48,7 @@ export interface Config {
   knowledgeBooks?: Record<string, string>
   KBExtraPath?: string
   KBMaxNum?: number
+  KBExtraFileName?: Record<string, string>
 }
 
 export const Config = Schema.intersect([
@@ -123,31 +125,40 @@ export const Config = Schema.intersect([
     memoryLtPrompt: Schema.string()
       .default('请根据以下聊天记录，更新旧的长期记忆。只保留重要内容，剔除过时的、存疑的、矛盾的内容，不要捏造信息。内容要极其简单明了，不要超过500字。请直接返回总结内容，不要添加任何解释或额外信息。')
       .description('长期记忆生成用到的提示词'),
-    memoryLtUseBotPrompt: Schema.boolean()
+    memoryLtUseBotPrompt: Schema.boolean().experimental()
       .default(true)
       .description('生成长期记忆时，是否使用机器人人设（botPrompt）。')
   }).description('功能3：长期记忆设置'),
   Schema.object({
-    enableKB: Schema.boolean().experimental()
-     .default(false)
-     .description('是否开启知识库功能'),
-    knowledgeBooks: Schema.array(Schema.object(
-      {
-        keyword: Schema.string().required(),
-        content: Schema.string().required()
-      }
-    )).experimental()
-    .role('table')
-    .description('知识库，键为关键词，值为内容。（关键词可以用逗号隔开，当收到消息中匹配到任意一个关键词，则将对应的内容作为知识库发送给AI。可用于人设补充等。）')
-    .default([{keyword: "酒馆,ST",content: "SillyTavern"}]
+    enableKB: Schema.boolean()
+      .default(false)
+      .description('是否开启知识库功能。'),
+      knowledgeBooks: Schema.array(Schema.object(
+        {
+          keyword: Schema.string().required(),
+          content: Schema.string().required()
+        }
+      ))
+      .role('table')
+      .description('知识库，键为关键词，值为内容。（关键词可以用逗号隔开，当收到消息中匹配到任意一个关键词，则将对应的内容作为知识库发送给AI。可用于人设补充等。）')
+      .default([{keyword: "酒馆,ST",content: "SillyTavern"}]
     ),
-    enableExtraKB: Schema.boolean().experimental()
-    .default(false)
-    .description('是否开启额外的知识库功能'),
-    KBExtraPath: Schema.string().experimental()
+    enableExtraKB: Schema.boolean()
+      .default(false)
+      .description('是否开启额外的知识库功能。插件初始化时会自动提取额外知识库文件。'),
+
+    KBExtraPath: Schema.string()
       .default('')
       .description('额外的知识库路径的目录，填绝对路径。插件会从该目录下的json文件和txt文件中检查，内容格式为{"关键词": "内容"}'),
-    KBMaxNum: Schema.number().experimental()
+    KBExtraFileName: Schema.array(Schema.object(
+      {
+        filename: Schema.string().required()
+      }
+      ))
+      .role('table')
+      .description('额外的知识库文件名，填文件名，不带后缀。留空的话会检查所有文件。')
+      .default([]),
+    KBMaxNum: Schema.number()
      .default(5)
      .description('同时触发知识库的最大条目数')
   }).description('功能4：知识库设置'),
@@ -1601,10 +1612,21 @@ async function extractKBsFromFile(config,ctx): Promise<Array<{ keyword: string, 
   try {
     // 遍历目录获取文件列表
     const files = fs.readdirSync(kbPath)
-      .filter(f => f.endsWith('.json') || f.endsWith('.txt'))
+      .filter(f => {
+        // 检查文件扩展名
+        const isValidExt = f.endsWith('.json') || f.endsWith('.txt')
+
+        // 如果配置了指定文件名，则进一步过滤
+        if (config.KBExtraFileName && config.KBExtraFileName.length > 0) {
+          const filename = f.replace(/\.[^/.]+$/, "") // 去除扩展名
+          return isValidExt && config.KBExtraFileName.some(entry => entry.filename === filename)
+        }
+
+        return isValidExt
+      })
       .map(f => path.join(kbPath, f))
     if(files.length === 0){
-      ctx.logger.error(`配置的目录下未找到json或txt文件`)
+      ctx.logger.error(`配置的目录下未找到符合要求的json或txt文件`)
       return kbs
     }
     // 处理每个文件
