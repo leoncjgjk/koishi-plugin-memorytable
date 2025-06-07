@@ -10,9 +10,14 @@ export interface Config {
   apiEndpoint?: string
   apiKey?: string
   model?: string
+  enableMemSt?: boolean
+  enableMemStApi?: boolean
   memoryStMessages?: number
   memoryStMesNumMax?: number
   memoryStMesNumUsed?: number
+  enableMemLt?: boolean
+  enableMemLtApi?: boolean
+  memoryLtMessages?: number
   memoryLtPrompt?: string
   traitMesNumberFT?: number
   traitMesNumber?: number
@@ -24,9 +29,6 @@ export interface Config {
 
 export const Config = Schema.intersect([
   Schema.object({
-    maxMessages: Schema.number()
-      .default(20)
-      .description('每个聊天对象保存的聊天记录(单群）'),
     apiEndpoint: Schema.string()
       .default('https://api.openai.com/v1/chat/completions')
       .description('OpenAI兼容API的端点URL'),
@@ -36,16 +38,19 @@ export const Config = Schema.intersect([
     model: Schema.string()
       .default('gpt-3.5-turbo')
       .description('使用的模型名称')
-  }).description('基础设置'),
+  }).description('API设置'),
   Schema.object({
+    maxMessages: Schema.number()
+      .default(20)
+      .description('每个聊天对象保存的聊天记录(每个群单独算，不能少于更新特征用到的数量）'),
     traitMesNumberFT: Schema.number()
       .default(6)
-      .description('更新特征读取的消息数量(第一次创建时)'),
+      .description('更新特征读取的聊天记录条数(第一次创建时,此设置暂时无效)'),
     traitMesNumber: Schema.number()
       .default(10)
-      .description('更新特征读取的消息数量（后续更新）'),
+      .description('更新特征读取的聊天记录条数（后续更新时）'),
     traitTemplate: Schema.dict(Schema.string())
-      .description('特征模板，键为特征项，值为提示词')
+      .description('特征模板，键为特征项，值为提示词。（*提示：直接点击下面特征的名字是可以修改的）')
       .default({
         '称呼': '机器人应该如何称呼用户？',
         '性别': '只允许填：未知/男/女',
@@ -54,40 +59,48 @@ export const Config = Schema.intersect([
         '事件':'总结一下机器人和用户之间发生过的印象深刻的事情，不超过50个字'
       }),
     traitCacheNum: Schema.number()
-    .default(0)
-    .description('特征缓存条数(额外发送最近几个人的特征信息。默认为0，代表只发送当前消息对象的特征信息。)')
-  }).description('单人特征信息设置'),
+      .default(0)
+      .description('特征缓存条数(额外发送最近几个人的特征信息。默认为0，代表只发送当前消息对象的特征信息。)')
+  }).description('功能1：特征信息设置'),
   Schema.object({
     enableMemSt: Schema.boolean()
-    .default(true)
-    .description('是否开启短期记忆'),
-  memoryStMessages: Schema.number()
-    .default(50)
-    .description('短记忆生成用到的消息数量'),
-  memoryStMesNumMax: Schema.number()
-    .default(10)
-    .description('短记忆保留的条数'),
-  memoryStMesNumUsed: Schema.number()
-    .default(5)
-    .description('短记忆真实使用的条数（发给AI最近x条）'),
-  memoryStPrompt: Schema.string()
-    .default('你是一个聊天记录总结助手，你的任务是根据提供的聊天记录和之前的总结，生成一段新的、简洁的聊天记录总结，记录发生的事情和其中主要人物的行为，而且新的总结不要和之前的总结重复。请直接返回总结内容，不要添加任何解释')
-    .description('短期记忆生成用到的提示词'),
-  enableMemLt: Schema.boolean()
-    .default(true)
-    .description('是否开启长期记忆(必须先开启短期记忆，否则开了也没用）'),
-  memoryLtMessages: Schema.number()
-    .default(50)
-    .description('长期记忆生成用到的消息数量（或者叫远期记忆，因为只会使用短期记忆已经使用过的消息生成）'),
-  memoryLtPrompt: Schema.string()
-  .default('请根据以下聊天记录，更新旧的长期记忆。只保留重要内容，剔除过时的、存疑的、矛盾的内容，不要捏造信息。内容要极其简单明了，不要超过500字。请直接返回总结内容，不要添加任何解释或额外信息。')
-  .description('长期记忆生成用到的提示词'),
-  }).description('群聊记忆设置'),
+      .default(true)
+      .description('是否生成新的短期记忆'),
+    enableMemStApi: Schema.boolean()
+      .default(true)
+      .description('是否使用已有的短期记忆（关闭后短期记忆将不会生效）'),
+    memoryStMessages: Schema.number()
+      .default(30)
+      .description('短记忆生成时，用到的聊天记录条数'),
+    memoryStMesNumMax: Schema.number()
+      .default(10)
+      .description('短记忆保留的条数（建议大于下面这个设置2.5倍以上）'),
+    memoryStMesNumUsed: Schema.number()
+      .default(5)
+      .description('短记忆真实使用的条数（发给AI最近x条，生成新的短期记忆也会参考）'),
+    memoryStPrompt: Schema.string()
+      .default('你是一个聊天记录总结助手，你的任务是根据提供的聊天记录和之前的总结，生成一段新的、简洁的聊天记录总结，记录发生的事情和其中主要人物的行为，而且新的总结不要和之前的总结重复。请直接返回总结内容，不要添加任何解释')
+      .description('短期记忆生成用到的提示词'),
+  }).description('功能2：短期记忆设置'),
   Schema.object({
-    botMesReport: Schema.boolean()
+    enableMemLt: Schema.boolean()
+      .default(false)
+      .description('是否生成新的长期记忆(必须先开启短期记忆，否则开了也没用）'),
+    enableMemLtApi: Schema.boolean()
+    .default(false)
+    .description('是否使用已有的长期记忆（关闭后长期记忆将不会生效）'),
+    memoryLtMessages: Schema.number()
+      .default(30)
+      .description('长期记忆生成用到的聊天记录条数（或者叫远期记忆，因为只会使用短期记忆已经使用过的消息生成）'),
+    memoryLtPrompt: Schema.string()
+      .default('请根据以下聊天记录，更新旧的长期记忆。只保留重要内容，剔除过时的、存疑的、矛盾的内容，不要捏造信息。内容要极其简单明了，不要超过500字。请直接返回总结内容，不要添加任何解释或额外信息。')
+      .description('长期记忆生成用到的提示词'),
+  }).description('功能3：长期记忆设置'),
+  Schema.object({
+    botMesReport: Schema.boolean().experimental()
      .default(false)
      .description('是否已开启机器人聊天上报（不知道的开了也没用）'),
-    debugMode: Schema.boolean()
+    debugMode: Schema.boolean().experimental()
      .default(false)
      .description('是否开启调试模式')
   }).description('高级设置')
@@ -1081,14 +1094,14 @@ export class MemoryTableService extends Service {
       result.traits = allTraits;
 
       // 处理短期记忆
-      if (sharedMemoryEntry?.memory_st?.length > 0) {
+      if (this.config.enableMemStApi && sharedMemoryEntry?.memory_st?.length > 0) {
         result.memory_st = sharedMemoryEntry.memory_st
           .slice(-this.config.memoryStMesNumUsed)
           .map(memory => memory.replace(/机器人/g, '我'));
       }
 
       // 处理长期记忆
-      if (sharedMemoryEntry?.memory_lt?.length > 0) {
+      if (this.config.enableMemLtApi && sharedMemoryEntry?.memory_lt?.length > 0) {
         result.memory_lt = sharedMemoryEntry.memory_lt.map(memory =>
           memory.replace(/机器人/g, '我')
         );
