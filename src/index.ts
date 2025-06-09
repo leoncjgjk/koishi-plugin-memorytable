@@ -9,8 +9,9 @@ export const usage = `
 ### 本插件为Koishi机器人提供长期记忆功能，已适配的是koishi-plugin-oobabooga-testbot。其他机器人插件可自行调用getMem函数使用。
 
 ## 最近版本的更新日志：
-### v1.3.4
+### v1.3.5
 - 增加娱乐功能，伪人测试。
+- 如果填写了botPrompt，伪人测试会以此视角分析并总结。
 ### v1.3.3
 - 增加知识库功能，可额外配置关键词触发知识库查询。
 - 支持额外知识库文件的配置。
@@ -674,15 +675,18 @@ export class MemoryTableService extends Service {
             .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
             .slice(0, number);
 
-          // 提取消息内容并拼接发送者名字
           const messagesToAnalyze = sortedHistory.map(entry => `${entry.sender_name}：${entry.content}`);
           if (messagesToAnalyze.length < 1) {
             return '未能提取到有效的历史消息内容。';
           }
+          const baseContent = `你是一个资深的伪人鉴定专家。接下来我会给你一些聊天记录，请你分析这些记录中，每一句话分别有多大的概率是伪人说的。请给出其中涉及到的每个人的伪人概率，如果概率大于等于50%则回复格式为"用户名：xx%伪人(不超过15个字的理由)。"，如果小于50%则回复格式为"用户名：xx%伪人。"并且回复时要按照伪人概率从高到低排序。`
 
-          // 构建发送给 OpenAI 的消息
+          const content = this.config.botPrompt ?
+            `${baseContent}请从此人设的视角分析以及回复，并在回复末尾以此人设的口吻进行总结或调侃。<人设>${this.config.botPrompt}</人设>` :
+            baseContent;
+
           const openAIMessages = [
-            { role: 'system', content: `你是一个资深的伪人鉴定专家。接下来我会给你一些聊天记录，请你分析这些记录中，每一句话分别有多大的概率是伪人说的。请给出其中涉及到的每个人的伪人概率，如果概率大于等于50%则回复格式为"用户名：xx%伪人(不超过15个字的理由)。"，如果小于50%则回复格式为"用户名：xx%伪人。"并且回复时要按照伪人概率从高到低排序。` },
+            { role: 'system', content },
             { role: 'user', content: messagesToAnalyze.join('\n') }
           ];
 
