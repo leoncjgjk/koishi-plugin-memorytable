@@ -9,9 +9,11 @@ export const usage = `
 ### 本插件为Koishi机器人提供长期记忆功能，已适配的是koishi-plugin-oobabooga-testbot。其他机器人插件可自行调用getMem函数使用。
 
 ## 最近版本的更新日志：
-### v1.3.6
+### v1.3.7
 - 增加群聊总结指令，方便吃瓜
 - 优化一些设置
+- 增加日志开关
+- 增加常用指令说明
 ### v1.3.5
 - 增加娱乐功能，伪人测试。
 - 如果填写了botPrompt，伪人测试会以此视角分析并总结。
@@ -24,6 +26,20 @@ export const usage = `
 - 优化设置选项及默认设置。
 - 长短期记忆优化开关功能。
 - （实验性）对聊天记录中的url进行简化
+
+##常用指令说明：
+- 鉴定伪人 [可选参数：条数]
+娱乐功能：调用最近x条聊天记录，判定其中每个人的伪人概率。
+- 吃瓜、群聊总结 [可选参数：prompt]
+娱乐功能：总结最近群里在说什么，参数自己写prompt以限定总结的内容。
+- 好感度
+查询机器人对自己的好感度
+- 好感排名 [可选参数：前x名]
+查询群内好感排名
+- mem.mem [可选参数：群id、用户id]
+查询机器人生成的指定用户记忆，群id填-1代表本群。例如：mem mem -1 xxxxx
+- mem.backup/restore
+备份/恢复备份，生成在插件目录的backup文件夹中，方便查看当前数据库的完整数据。
 `
 
 export interface Config {
@@ -176,6 +192,9 @@ export const Config = Schema.intersect([
     botMesReport: Schema.boolean()
      .default(false)
      .description('是否已开启机器人聊天上报（不知道的开了也没用）'),
+    detailLog: Schema.boolean().experimental()
+     .default(false)
+     .description('是否记录并在koishi控制台显示每一步的日志（关闭后只显示报错。开启可方便观察插件运行情况。）'),
     debugMode: Schema.boolean()
      .default(false)
      .description('是否开启调试模式')
@@ -343,7 +362,7 @@ export class MemoryTableService extends Service {
           if(this.config.debugMode){
             return h('figure', { children: responseElements })
           }else{
-            ctx.logger.info('figure responseElements:', JSON.stringify(responseElements, null, 2))
+            if(this.config.detailLog) this.ctx.logger.info('figure responseElements:', JSON.stringify(responseElements, null, 2))
             return '特征设置成功'
           }
 
@@ -547,7 +566,7 @@ export class MemoryTableService extends Service {
 				const figureContent = h('figure', {
 					children: responseElements
 				})
-        // this.ctx.logger.info('figureContent:',figureContent)
+        // if(this.config.detailLog) this.ctx.logger.info('figureContent:',figureContent)
 
 				// 发送消息
 				return figureContent
@@ -625,7 +644,7 @@ export class MemoryTableService extends Service {
 
     // 群聊总结指令
     ctx.command('mem.summarize extraPrompt?:string',{ authority: 2 })
-      .alias('群聊总结')
+      .alias('群聊总结','吃瓜')
 			.userFields(['authority'])
       .action(async ({ session }, extraPrompt) => {
         const memoryEntry = await this.ctx.database.get('memory_table', {
@@ -773,7 +792,7 @@ export class MemoryTableService extends Service {
           await this.handleMessage(session)
         }
       }
-      // this.ctx.logger.info('message',session)
+      // if(this.config.detailLog) this.ctx.logger.info('message',session)
       await this.autoUpdateTrait(session.userId,session.guildId || session.channelId || '0',session)
 		})
 
@@ -781,7 +800,7 @@ export class MemoryTableService extends Service {
     // ctx.on('send', async (session: Session) => {
     //   if(!config.botMesReport){
     //     await this.handleMessageBot(session)
-    //     this.ctx.logger.info('send',session)
+    //     if(this.config.detailLog) this.ctx.logger.info('send',session)
     //   }
     // })
 	}
@@ -847,15 +866,15 @@ export class MemoryTableService extends Service {
       //const maxMessagesGroup = Math.min(this.config.maxMessages * 5, groupMemoryEntry.history.length + 1)
       groupMemoryEntry.history = [...groupMemoryEntry.history, groupMessageEntry].slice(-this.config.maxMessagesGroup)
       await this.ctx.database.upsert('memory_table', [groupMemoryEntry])
-      this.ctx.logger.info(`OOB消息已存入群聊 ${groupChatGroupId} 的总记录`)
+      if(this.config.detailLog) this.ctx.logger.info(`OOB消息已存入群聊 ${groupChatGroupId} 的总记录`)
     }
 
-    // this.ctx.logger.info('处理oob回传机器人消息',session)
+    // if(this.config.detailLog) this.ctx.logger.info('处理oob回传机器人消息',session)
     // 获取目标用户ID
     let targetUserId = authID
     let targetGroupId = session.guildId || session.channelId || '0'
 
-    // this.ctx.logger.info('前this.messageQueue.length：',this.messageQueue.length)
+    // if(this.config.detailLog) this.ctx.logger.info('前this.messageQueue.length：',this.messageQueue.length)
 
       // 构建消息记录
       const messageEntry: MessageEntry = {
@@ -897,7 +916,7 @@ export class MemoryTableService extends Service {
       if (matchIndex !== -1) {
         this.messageQueue.splice(matchIndex, 1)
       }
-      // this.ctx.logger.info('后this.messageQueue.length：',this.messageQueue.length)
+      // if(this.config.detailLog) this.ctx.logger.info('后this.messageQueue.length：',this.messageQueue.length)
 
       return
 }
@@ -920,7 +939,7 @@ export class MemoryTableService extends Service {
 					targetGroupId = session.guildId || session.channelId || '0'
 				}
 			}
-      // this.ctx.logger.info('this.messageQueue.length：',this.messageQueue.length)
+      // if(this.config.detailLog) this.ctx.logger.info('this.messageQueue.length：',this.messageQueue.length)
 
 			// 如果找到目标用户，直接存储消息
 			if (targetUserId) {
@@ -970,14 +989,14 @@ export class MemoryTableService extends Service {
 					timestamp: new Date(),
           used: false
 				}
-        this.ctx.logger.info('messageEntry：',messageEntry)
+        if(this.config.detailLog) this.ctx.logger.info('messageEntry：',messageEntry)
 
 				// 获取或创建记忆表
 				let memoryEntry = await this.ctx.database.get('memory_table', {
 					group_id: queueGroupId,
 					user_id: queueUserId
 				}).then(entries => entries[0])
-        this.ctx.logger.info('group_id：',queueGroupId,'user_id：',queueUserId)
+        if(this.config.detailLog) this.ctx.logger.info('group_id：',queueGroupId,'user_id：',queueUserId)
 
 				if (!memoryEntry) {
 					memoryEntry = {
@@ -1034,26 +1053,26 @@ export class MemoryTableService extends Service {
       const maxGroupHistory = Math.min(this.config.maxMessages * 5, groupMemoryEntry.history.length + 1) // 群聊总记录可以适当多一些
       groupMemoryEntry.history = [...groupMemoryEntry.history, groupMessageEntry].slice(-maxGroupHistory)
       await this.ctx.database.upsert('memory_table', [groupMemoryEntry])
-      this.ctx.logger.info(`消息已存入群聊 ${groupChatGroupId} 的总记录`)
+      if(this.config.detailLog) this.ctx.logger.info(`消息已存入群聊 ${groupChatGroupId} 的总记录`)
 
       //生成短期记忆总结
       if (groupChatGroupId && !this.generatingSummaryFor.has(groupChatGroupId) && this.config.enableMemSt) {
         const unusedMessagesCount = groupMemoryEntry.history.filter(entry => !entry.used).length
         if (unusedMessagesCount >= this.config.memoryStMessages) {
           this.generatingSummaryFor.add(groupChatGroupId)
-          this.ctx.logger.info(`群聊 ${groupChatGroupId} 满足生成总结条件，开始生成...`)
+          if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupChatGroupId} 满足生成总结条件，开始生成...`)
           generateSummary.call(this, groupChatGroupId)
             .then(summary => {
               if (summary) {
-                this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成成功。`)
+                if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成成功。`)
                 // 在短期记忆生成成功时，调用长期记忆生成
                 if(this.config.enableMemLt){
                   generateLongTermMemory.call(this, groupChatGroupId)
                   .then(ltSummary => {
                     if (ltSummary) {
-                      this.ctx.logger.info(`群聊 ${groupChatGroupId} 长期记忆生成成功。`)
+                      if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupChatGroupId} 长期记忆生成成功。`)
                     } else {
-                      this.ctx.logger.info(`群聊 ${groupChatGroupId} 长期记忆生成未返回内容或失败。`)
+                      if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupChatGroupId} 长期记忆生成未返回内容或失败。`)
                     }
                   })
                   .catch(error => {
@@ -1061,7 +1080,7 @@ export class MemoryTableService extends Service {
                   })
                 }
               } else {
-                this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成未返回内容或失败。`)
+                if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成未返回内容或失败。`)
               }
             })
             .catch(error => {
@@ -1069,13 +1088,13 @@ export class MemoryTableService extends Service {
             })
             .finally(() => {
               this.generatingSummaryFor.delete(groupChatGroupId)
-              this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成流程结束。`)
+              if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成流程结束。`)
             })
         } else {
-          this.ctx.logger.info(`群聊 ${groupChatGroupId} 未使用消息数量 ${unusedMessagesCount}，未达到生成总结所需的 ${this.config.memoryStMessages} 条。`)
+          if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupChatGroupId} 未使用消息数量 ${unusedMessagesCount}，未达到生成总结所需的 ${this.config.memoryStMessages} 条。`)
         }
       } else if (this.generatingSummaryFor.has(groupChatGroupId)) {
-        this.ctx.logger.info(`群聊 ${groupChatGroupId} 已有总结正在生成中，跳过本次触发。`)
+        if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupChatGroupId} 已有总结正在生成中，跳过本次触发。`)
       }
     }
 
@@ -1088,7 +1107,7 @@ export class MemoryTableService extends Service {
 			// 私聊消息
 			!session.guildId && !session.channelId
 		)
-    // this.ctx.logger.info('是否需要响应消息：',shouldRespond)
+    // if(this.config.detailLog) this.ctx.logger.info('是否需要响应消息：',shouldRespond)
 		// 如果不需要响应，直接返回
 		if (!shouldRespond) return
 
@@ -1097,7 +1116,7 @@ export class MemoryTableService extends Service {
 			userId: session.userId,
 			groupId: session.guildId || session.channelId || '0'
 		})
-    this.ctx.logger.info('this.messageQueue.length：',this.messageQueue.length)
+    if(this.config.detailLog) this.ctx.logger.info('this.messageQueue.length：',this.messageQueue.length)
 		const {userId, username, channelId, guildId } = session
 		const groupId = guildId || channelId || '0' // 私聊统一用'0'作为group_id
 
@@ -1151,7 +1170,7 @@ export class MemoryTableService extends Service {
       const entry = memoryEntries[0]
       const unusedMessages = entry.history.filter(msg => !msg.used).length
       if (unusedMessages >= this.config.traitMesNumber) {
-        this.ctx.logger.info('自动更新trait')
+        if(this.config.detailLog) this.ctx.logger.info('自动更新trait')
         await generateTrait.call(this, user_id, group_id,session)
       }
     }
@@ -1171,37 +1190,37 @@ export class MemoryTableService extends Service {
         memoryEntry.trait = {}
         memoryEntry.history = []
         await this.ctx.database.upsert('memory_table', [memoryEntry])
-        this.ctx.logger.info('清空本人当前群聊的trait和history')
+        if(this.config.detailLog) this.ctx.logger.info('清空本人当前群聊的trait和history')
       }
     }else{
-      this.ctx.logger.info('未获取到群聊或用户id，清空失败')
+      if(this.config.detailLog) this.ctx.logger.info('未获取到群聊或用户id，清空失败')
     }
   }
 
   // 清空记忆表
   public async clearMem(autoBackup : boolean = true) {
-    this.ctx.logger.info('清空记忆表！是否自动备份：',autoBackup)
+    if(this.config.detailLog) this.ctx.logger.info('清空记忆表！是否自动备份：',autoBackup)
     if(autoBackup){
       await this.backupMem()
     }
     await this.ctx.database.remove('memory_table', {})
-    this.ctx.logger.info('记忆表已清空')
+    if(this.config.detailLog) this.ctx.logger.info('记忆表已清空')
     return '记忆表已清空'
   }
 
   // 传入机器人消息
   public async setMemBotMes(session: Session, content: string,authID:string) {
-    this.ctx.logger.info('传入oob回传的机器人消息:',content)
+    if(this.config.detailLog) this.ctx.logger.info('传入oob回传的机器人消息:',content)
     if(!this.config.botMesReport){
       await this.handleMessageBotOob(session,content,authID)
     }else{
-      this.ctx.logger.info('开了机器人上报无视回传消息')
+      if(this.config.detailLog) this.ctx.logger.info('开了机器人上报无视回传消息')
     }
   }
 
   // 获取用户记忆信息
   public async getMem(userId: string, groupId: string, session?): Promise<string | Record<string, any>> {
-    this.ctx.logger.info('进入getMem函数')
+    if(this.config.detailLog) this.ctx.logger.info('进入getMem函数')
     try {
       const actualGroupId = groupId === '0' ? `private:${userId}` : groupId;
       const [traitMemoryEntry, sharedMemoryEntry] = await Promise.all([
@@ -1239,7 +1258,7 @@ export class MemoryTableService extends Service {
 
       // 处理其他用户的trait (仅当traitCacheNum > 0时)
       if (this.config.traitCacheNum > 0 && sharedMemoryEntry?.history) {
-        this.ctx.logger.info('开始处理其他用户的trait')
+        if(this.config.detailLog) this.ctx.logger.info('开始处理其他用户的trait')
 
         const cachedUsers: { id: string; name: string; trait: Record<string, any> }[] = [];
         const addedUserIds = new Set<string>();
@@ -1335,15 +1354,15 @@ export class MemoryTableService extends Service {
             result.kbs = resultKbs;
           }
         }else{
-          this.ctx.logger.info('开启了知识库，但内容为空，跳过处理')
+          if(this.config.detailLog) this.ctx.logger.info('开启了知识库，但内容为空，跳过处理')
         }
       }
 
       if (Object.keys(result).length === 0) {
-        this.ctx.logger.info(`用户 ${userId} 在群组 ${actualGroupId} 中没有相关记忆`);
+        if(this.config.detailLog) this.ctx.logger.info(`用户 ${userId} 在群组 ${actualGroupId} 中没有相关记忆`);
         return '';
       }
-      //this.ctx.logger.info(`用户 ${userId} 在群组 ${actualGroupId} 中获取到的记忆信息：`, result);
+      //if(this.config.detailLog) this.ctx.logger.info(`用户 ${userId} 在群组 ${actualGroupId} 中获取到的记忆信息：`, result);
       return result;
     } catch (error) {
       this.ctx.logger.error(`获取记忆信息失败: ${error.message}`);
@@ -1406,7 +1425,7 @@ async function generateLongTermMemory(groupId: string): Promise<string> {
     }).then(entries => entries[0])
 
     if (!memoryEntry) {
-      this.ctx.logger.info(`群聊 ${groupId} 尚无记忆条目，无法生成长期记忆`)
+      if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupId} 尚无记忆条目，无法生成长期记忆`)
       return ''
     }
 
@@ -1414,7 +1433,7 @@ async function generateLongTermMemory(groupId: string): Promise<string> {
     const usedHistory = memoryEntry.history.filter(entry => entry.used)
 
     if (usedHistory.length === 0) {
-      this.ctx.logger.info(`群聊 ${groupId} 没有已使用的短期记忆相关历史记录，无法生成长期记忆`)
+      if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupId} 没有已使用的短期记忆相关历史记录，无法生成长期记忆`)
       return ''
     }
 
@@ -1422,7 +1441,7 @@ async function generateLongTermMemory(groupId: string): Promise<string> {
     const historyForLt = usedHistory.slice(0, this.config.memoryLtMessages)
 
     if (historyForLt.length === 0) {
-      this.ctx.logger.info(`群聊 ${groupId} 没有足够已使用的历史记录生成长期记忆`)
+      if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupId} 没有足够已使用的历史记录生成长期记忆`)
       return ''
     }
 
@@ -1452,7 +1471,7 @@ async function generateLongTermMemory(groupId: string): Promise<string> {
       }
     ]
 
-    //this.ctx.logger.info(`为群聊 ${groupId} 生成长期记忆，输入信息:`, messages)
+    //if(this.config.detailLog) this.ctx.logger.info(`为群聊 ${groupId} 生成长期记忆，输入信息:`, messages)
 
     // 调用 OpenAI API 生成长期记忆
     let newLongTermMemory = await callOpenAI.call(this, messages)
@@ -1476,7 +1495,7 @@ async function generateLongTermMemory(groupId: string): Promise<string> {
       history: updatedHistory
     }])
 
-    this.ctx.logger.info(`群聊 ${groupId} 的新长期记忆已生成并保存: ${newLongTermMemory}`)
+    if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupId} 的新长期记忆已生成并保存: ${newLongTermMemory}`)
     return newLongTermMemory
 
   } catch (error) {
@@ -1495,7 +1514,7 @@ async function generateSummary(groupId: string): Promise<string> {
     }).then(entries => entries[0])
 
     if (!memoryEntry) {
-      this.ctx.logger.info(`群聊 ${groupId} 尚无记忆条目`)
+      if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupId} 尚无记忆条目`)
       return ''
     }
 
@@ -1508,7 +1527,7 @@ async function generateSummary(groupId: string): Promise<string> {
     const recentMemorySt = memoryEntry.memory_st.slice(-this.config.memoryStMesNumUsed)
 
     if (recentHistory.length === 0 && recentMemorySt.length === 0) {
-      this.ctx.logger.info(`群聊 ${groupId} 没有足够信息生成总结`)
+      if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupId} 没有足够信息生成总结`)
       return ''
     }
 
@@ -1538,7 +1557,7 @@ async function generateSummary(groupId: string): Promise<string> {
       }
     ]
 
-    //this.ctx.logger.info(`为群聊 ${groupId} 生成总结，输入信息:`, messages)
+    //if(this.config.detailLog) this.ctx.logger.info(`为群聊 ${groupId} 生成总结，输入信息:`, messages)
 
     // 调用 OpenAI API 生成总结
     let summary = await callOpenAI.call(this, messages)
@@ -1577,7 +1596,7 @@ async function generateSummary(groupId: string): Promise<string> {
       history: updatedHistory
     }])
 
-    this.ctx.logger.info(`群聊 ${groupId} 的新总结已生成并保存: ${summary}`)
+    if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupId} 的新总结已生成并保存: ${summary}`)
     return summary
 
   } catch (error) {
@@ -1605,7 +1624,7 @@ async function generateTrait(userId: string, groupId: string,session:Session): P
       .filter(entry => !entry.used)
 
     if (recentHistory.length <= 2) {
-      this.ctx.logger.info('未使用的消息数量不足，取消特征更新')
+      if(this.config.detailLog) this.ctx.logger.info('未使用的消息数量不足，取消特征更新')
       return memoryEntry.trait || {}
     }
 
@@ -1632,7 +1651,7 @@ ${JSON.stringify(memoryEntry.trait, null, 2)}
 ${JSON.stringify(this.config.traitTemplate, null, 2)}` }
     ]
 
-    this.ctx.logger.info('记忆分析：',messages)
+    if(this.config.detailLog) this.ctx.logger.info('记忆分析：',messages)
 
     try {
       const response = await callOpenAI.call(this, messages)
@@ -1644,10 +1663,10 @@ ${JSON.stringify(this.config.traitTemplate, null, 2)}` }
       if (!parsedTrait || Object.keys(parsedTrait).length === 0) {
         this.ctx.logger.warn('API返回的特征为空，尝试使用现有特征')
         if (Object.keys(memoryEntry.trait).length > 0) {
-          this.ctx.logger.info('使用当前trait数据')
+          if(this.config.detailLog) this.ctx.logger.info('使用当前trait数据')
           return memoryEntry.trait
         } else if (memoryEntry.traitBak && Object.keys(memoryEntry.traitBak).length > 0) {
-          this.ctx.logger.info('当前trait为空，从traitBak恢复trait数据')
+          if(this.config.detailLog) this.ctx.logger.info('当前trait为空，从traitBak恢复trait数据')
           trait = { ...memoryEntry.traitBak }
         } else {
           trait = {}
@@ -1663,8 +1682,8 @@ ${JSON.stringify(this.config.traitTemplate, null, 2)}` }
         }
         return entry
       })
-      this.ctx.logger.info('traitBak：',{ ...memoryEntry.traitBak })
-      this.ctx.logger.info('trait：',{ ...memoryEntry.trait })
+      if(this.config.detailLog) this.ctx.logger.info('traitBak：',{ ...memoryEntry.traitBak })
+      if(this.config.detailLog) this.ctx.logger.info('trait：',{ ...memoryEntry.trait })
       // 备份当前trait到traitBak
       const traitBak = { ...memoryEntry.trait }
 
@@ -1676,7 +1695,7 @@ ${JSON.stringify(this.config.traitTemplate, null, 2)}` }
         history: updatedHistory
       }])
 
-      this.ctx.logger.info('新特征结果：',trait)
+      if(this.config.detailLog) this.ctx.logger.info('新特征结果：',trait)
 
     } catch (error) {
       this.ctx.logger.warn(`生成特征失败: ${error.message}`)
@@ -1826,7 +1845,7 @@ async function handleSetTrait(this: MemoryTableService, session: Session, trait:
     if(this.config.debugMode){
       return h('figure', { children: responseElements })
     }else{
-      this.ctx.logger.info('figure', { children: responseElements })
+      if(this.config.detailLog) this.ctx.logger.info('figure', { children: responseElements })
       return '特征设置成功'
     }
 
