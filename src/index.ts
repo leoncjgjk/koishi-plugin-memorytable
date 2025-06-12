@@ -9,8 +9,8 @@ export const usage = `
 ### 本插件为Koishi机器人提供长期记忆功能，已适配的是koishi-plugin-oobabooga-testbot。其他机器人插件可自行调用getMem函数使用。
 
 ## 最近版本的更新日志：
-### v1.3.7
-- 增加群聊总结指令，方便吃瓜
+### v1.3.8
+- 增加群聊总结指令，方便吃瓜；2个总结指令，分别是吃瓜和吃瓜2
 - 优化一些设置
 - 增加日志开关
 - 增加常用指令说明
@@ -31,7 +31,9 @@ export const usage = `
 - 鉴定伪人 [可选参数：条数]
 娱乐功能：调用最近x条聊天记录，判定其中每个人的伪人概率。
 - 吃瓜、群聊总结 [可选参数：prompt]
-娱乐功能：总结最近群里在说什么，参数自己写prompt以限定总结的内容。
+娱乐功能：总结最近群里在说什么，可写参数作为prompt，以要求AI进行针对性回答，例如："吃瓜 刚才有几个人复读了？"、"吃瓜 刚才都是谁在吵架？谁起的头？"。
+- 吃瓜2、群聊总结2 [可选参数：总结时间、prompt]
+娱乐功能：总结最近群里在说什么，可写参数要求总结最近x分钟的内容，默认为10分钟。可写参数作为prompt。
 - 好感度
 查询机器人对自己的好感度
 - 好感排名 [可选参数：前x名]
@@ -643,7 +645,7 @@ export class MemoryTableService extends Service {
       })
 
     // 群聊总结指令
-    ctx.command('mem.summarize extraPrompt?:string',{ authority: 2 })
+    ctx.command('mem.summarize [extraPrompt:string]',{ authority: 2 })
       .alias('群聊总结','吃瓜')
 			.userFields(['authority'])
       .action(async ({ session }, extraPrompt) => {
@@ -690,6 +692,99 @@ export class MemoryTableService extends Service {
           return '群聊总结指令失败，请查看日志了解详细信息'
         }
       })
+
+      // 群聊总结指令,只用history总结,可自定义总结之前多少分钟的内容
+    ctx.command('mem.summarize2 [min:number] [extraPrompt:string]',{ authority: 2 })
+    .alias('群聊总结2','吃瓜2')
+    .userFields(['authority'])
+    .action(async ({ session }, min,extraPrompt) => {
+      const memoryEntry = await this.ctx.database.get('memory_table', {
+        group_id: session.guildId||session.channelId,
+        user_id: '0'
+      }).then(entries => entries[0])
+      if (!memoryEntry || ( !memoryEntry.memory_st.length && !memoryEntry.history.length) ) {
+        return '还没有群聊记忆'
+      }
+      if(!extraPrompt){
+        extraPrompt = '请根据以下内容，说一下最近群里面在聊些什么。\n'
+      }
+      if(this.config.botPrompt)
+          extraPrompt += `请以此人设的视角进行回复：<人设>${this.config.botPrompt}</人设>。\n`
+
+      if(!min) min = 10;
+      let content = [
+        `这是最近的群聊记录<最近的群聊记录>${(() => {
+          const now = new Date();
+          // 默认获取最近10分钟的记录
+          const timeThreshold = new Date(now.getTime() - min * 60 * 1000);
+
+          // 按时间过滤并获取消息内容
+          let messages = memoryEntry.history
+            .filter(entry => new Date(entry.timestamp) >= timeThreshold)
+            .map(entry => entry.content);
+
+          // 如果最近时间段内消息太少，则取最后10条
+          if (messages.length < 10) {
+            messages = memoryEntry.history
+              .slice(-10)
+              .map(entry => entry.content);
+          }
+
+          return messages.join('\n');
+        })()}</最近的群聊记录>`
+      ].join('\n')
+
+      // 将长文本拆分成不超过4000字的片段
+      const MAX_CHUNK_SIZE = 4000;
+      let chunks = [];
+      let currentChunk = '';
+      let lines = content.split('\n');
+
+      for (let line of lines) {
+        if ((currentChunk + line).length > MAX_CHUNK_SIZE) {
+          if (currentChunk) {
+            chunks.push(currentChunk);
+          }
+          currentChunk = line;
+        } else {
+          currentChunk += (currentChunk ? '\n' : '') + line;
+        }
+      }
+      if (currentChunk) {
+        chunks.push(currentChunk);
+      }
+
+      try {
+        let finalSummary = '';
+        // 依次处理每个片段
+        for (let i = 0; i < chunks.length; i++) {
+          let message = [
+            { role: 'system', content: extraPrompt }
+          ];
+
+          // 如果不是第一个片段，将前一个总结加入提示
+          if (i > 0) {
+            message.push({
+              role: 'assistant',
+              content: `前面内容的总结：${finalSummary}`
+            });
+          }
+
+          message.push({
+            role: 'user',
+            content: chunks[i]
+          });
+
+          const chunkResult = await callOpenAI.call(this, message);
+          finalSummary = chunkResult;
+        }
+
+        return finalSummary;
+      } catch(e) {
+        this.ctx.logger.error(`群聊总结指令失败: ${e.message}`);
+        return '群聊总结指令失败，请查看日志了解详细信息';
+      }
+    })
 
     //  测试指令
     ctx.command('mem.say <content:text>',{ authority: 2 })
