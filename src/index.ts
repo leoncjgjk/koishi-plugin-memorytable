@@ -9,6 +9,9 @@ export const usage = `
 ### 本插件为Koishi机器人提供长期记忆功能，已适配的是koishi-plugin-oobabooga-testbot。其他机器人插件可自行调用getMem函数使用。
 
 ## 最近版本的更新日志：
+### v1.3.6
+- 增加群聊总结指令，方便吃瓜
+- 优化一些设置
 ### v1.3.5
 - 增加娱乐功能，伪人测试。
 - 如果填写了botPrompt，伪人测试会以此视角分析并总结。
@@ -25,6 +28,7 @@ export const usage = `
 
 export interface Config {
   maxMessages?: number
+  maxMessagesGroup?: number
   apiEndpoint?: string
   apiKey?: string
   model?: string
@@ -99,11 +103,14 @@ export const Config = Schema.intersect([
     enableMemStApi: Schema.boolean()
       .default(true)
       .description('是否使用已有的短期记忆（关闭后短期记忆将不会生效）'),
+    maxMessagesGroup: Schema.number()
+      .default(500)
+      .description('每个群聊聊天记录保存条数(每个群单独算，理论上不能少于短期记忆生成用到记忆条数的2倍）'),
     memoryStMessages: Schema.number()
       .default(30)
       .description('短记忆生成时，用到的聊天记录条数'),
     memoryStMesNumMax: Schema.number()
-      .default(10)
+      .default(30)
       .description('短记忆保留的条数（建议大于下面这个设置2.5倍以上）'),
     memoryStMesNumUsed: Schema.number()
       .default(5)
@@ -616,6 +623,55 @@ export class MemoryTableService extends Service {
         }
       })
 
+    // 群聊总结指令
+    ctx.command('mem.summarize extraPrompt?:string',{ authority: 2 })
+      .alias('群聊总结')
+			.userFields(['authority'])
+      .action(async ({ session }, extraPrompt) => {
+        const memoryEntry = await this.ctx.database.get('memory_table', {
+          group_id: session.guildId||session.channelId,
+          user_id: '0'
+        }).then(entries => entries[0])
+        if (!memoryEntry || ( !memoryEntry.memory_st.length && !memoryEntry.history.length) ) {
+          return '还没有群聊记忆'
+        }
+        if(!extraPrompt){
+          extraPrompt = '请根据以下内容，说一下最近群里面在聊些什么。\n'
+        }
+        if(this.config.botPrompt)
+            extraPrompt += `请以此人设的视角进行回复：<人设>${this.config.botPrompt}</人设>。\n`
+        let content = [
+          // 添加短期记忆内容
+          ...(memoryEntry.memory_st && memoryEntry.memory_st.length > 0
+            ? `这是之前群聊记录的概括<概括>${memoryEntry.memory_st.join('\n')}</概括>`
+            : ''),
+          // 添加历史记录内容
+          `这是最近的群聊记录<最近的群聊记录>${(() => {
+            let messages = memoryEntry.history
+              .filter(entry => !entry.used)
+              .map(entry => entry.content);
+            if (messages.length < 10) {
+              messages = memoryEntry.history
+                .slice(-10)
+                .map(entry => entry.content);
+            }
+            return messages.join('\n');
+          })()}</最近的群聊记录>`
+        ].join('\n')
+
+        let message = [
+          { role: 'system', content: extraPrompt },
+          { role: 'user', content: content }
+        ]
+        try{
+          const analysisResult = await callOpenAI.call(this, message);
+          return analysisResult
+        }catch(e){
+          this.ctx.logger.error(`群聊总结指令失败: ${e.message}`)
+          return '群聊总结指令失败，请查看日志了解详细信息'
+        }
+      })
+
     //  测试指令
     ctx.command('mem.say <content:text>',{ authority: 2 })
 			.userFields(['authority'])
@@ -788,8 +844,8 @@ export class MemoryTableService extends Service {
           history: []
         }
       }
-      const maxGroupHistory = Math.min(this.config.maxMessages * 5, groupMemoryEntry.history.length + 1)
-      groupMemoryEntry.history = [...groupMemoryEntry.history, groupMessageEntry].slice(-maxGroupHistory)
+      //const maxMessagesGroup = Math.min(this.config.maxMessages * 5, groupMemoryEntry.history.length + 1)
+      groupMemoryEntry.history = [...groupMemoryEntry.history, groupMessageEntry].slice(-this.config.maxMessagesGroup)
       await this.ctx.database.upsert('memory_table', [groupMemoryEntry])
       this.ctx.logger.info(`OOB消息已存入群聊 ${groupChatGroupId} 的总记录`)
     }
