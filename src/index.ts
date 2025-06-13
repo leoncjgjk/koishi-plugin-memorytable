@@ -9,7 +9,7 @@ export const usage = `
 ### 本插件为Koishi机器人提供长期记忆功能，已适配的是koishi-plugin-oobabooga-testbot。其他机器人插件可自行调用getMem函数使用。
 
 ## 最近版本的更新日志：
-### v1.3.8
+### v1.3.9
 - 增加群聊总结指令，方便吃瓜；2个总结指令，分别是吃瓜和吃瓜2
 - 优化一些设置
 - 增加日志开关
@@ -664,26 +664,25 @@ export class MemoryTableService extends Service {
         let content = [
           // 添加短期记忆内容
           ...(memoryEntry.memory_st && memoryEntry.memory_st.length > 0
-            ? `这是之前群聊记录的概括<概括>${memoryEntry.memory_st.join('\n')}</概括>`
+            ? `这是之前群聊记录的概括<概括>${memoryEntry.memory_st.join()}</概括>`
             : ''),
           // 添加历史记录内容
-          `这是最近的群聊记录<最近的群聊记录>${(() => {
-            let messages = memoryEntry.history
-              .filter(entry => !entry.used)
-              .map(entry => entry.content);
+          `这是最近的群聊记录<最近的群聊记录>${await (async () => {
+            // 先获取所有消息并过滤
+            let messages = memoryEntry.history.filter(entry => !entry.used);
             if (messages.length < 10) {
-              messages = memoryEntry.history
-                .slice(-10)
-                .map(entry => entry.content);
+              messages = memoryEntry.history.slice(-10);
             }
-            return messages.join('\n');
+            const formattedContent = await formatMessagesWithNames.call(this,messages, session);
+            return formattedContent;
           })()}</最近的群聊记录>`
-        ].join('\n')
+        ].join('')
 
         let message = [
           { role: 'system', content: extraPrompt },
           { role: 'user', content: content }
         ]
+        if(this.config.detailLog) this.ctx.logger.info('吃瓜message:',JSON.stringify(message))
         try{
           const analysisResult = await callOpenAI.call(this, message);
           return analysisResult
@@ -713,26 +712,23 @@ export class MemoryTableService extends Service {
 
       if(!min) min = 10;
       let content = [
-        `这是最近的群聊记录<最近的群聊记录>${(() => {
+        `这是最近的群聊记录<最近的群聊记录>${await (async () => {
           const now = new Date();
           // 默认获取最近10分钟的记录
           const timeThreshold = new Date(now.getTime() - min * 60 * 1000);
 
-          // 按时间过滤并获取消息内容
+          // 按时间过滤获取消息
           let messages = memoryEntry.history
-            .filter(entry => new Date(entry.timestamp) >= timeThreshold)
-            .map(entry => entry.content);
+            .filter(entry => new Date(entry.timestamp) >= timeThreshold);
 
           // 如果最近时间段内消息太少，则取最后10条
           if (messages.length < 10) {
-            messages = memoryEntry.history
-              .slice(-10)
-              .map(entry => entry.content);
+            messages = memoryEntry.history.slice(-10);
           }
-
-          return messages.join('\n');
+          const formattedContent = await formatMessagesWithNames.call(this,messages, session);
+          return formattedContent;
         })()}</最近的群聊记录>`
-      ].join('\n')
+      ].join('')
 
       // 将长文本拆分成不超过4000字的片段
       const MAX_CHUNK_SIZE = 4000;
@@ -774,7 +770,7 @@ export class MemoryTableService extends Service {
             role: 'user',
             content: chunks[i]
           });
-
+          if(this.config.detailLog) this.ctx.logger.info(`当前是第${i+1}/${chunks.length}个片段，内容长度为${chunks[i].length}，当前请求mes为${JSON.stringify(message)}`)
           const chunkResult = await callOpenAI.call(this, message);
           finalSummary = chunkResult;
         }
@@ -1950,6 +1946,32 @@ async function handleSetTrait(this: MemoryTableService, session: Session, trait:
   }
 }
 
+// 提取聊天记录时格式化消息记录，替换发送者ID为名称
+async function formatMessagesWithNames(messages: MessageEntry[], session: Session): Promise<string> {
+  // 收集所有唯一的sender_id
+  const uniqueSenderIds = [...new Set(messages.map(entry => entry.sender_id))];
+
+  // 查询每个sender的群成员信息
+  const senderNames = new Map();
+  for (const senderId of uniqueSenderIds) {
+    try {
+      const member = await session.bot.getGuildMember?.(session.guildId, senderId);
+      if (member) {
+        senderNames.set(senderId, member.nick || member?.user?.name);
+      }
+    } catch (error) {
+      this.ctx.logger.warn(`获取用户 ${senderId} 的群成员信息失败:`, error);
+    }
+  }
+
+  // 格式化消息内容
+  const formattedMessages = messages.map(entry => {
+    const name = senderNames.get(entry.sender_id) || entry.sender_name;
+    return `${name}(${entry.sender_id}): ${entry.content}`;
+  });
+  if(this.config.detailLog) this.ctx.logger.info('formattedMessages:',formattedMessages)
+  return formattedMessages.join('\n');
+}
 // 导出插件
 export async function apply(ctx: Context, config: Config) {
   // 直接创建服务实例
