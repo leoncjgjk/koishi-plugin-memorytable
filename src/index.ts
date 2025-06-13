@@ -1948,8 +1948,17 @@ async function handleSetTrait(this: MemoryTableService, session: Session, trait:
 
 // 提取聊天记录时格式化消息记录，替换发送者ID为名称
 async function formatMessagesWithNames(messages: MessageEntry[], session: Session): Promise<string> {
-  // 收集所有唯一的sender_id
-  const uniqueSenderIds = [...new Set(messages.map(entry => entry.sender_id))];
+  // 收集所有唯一的sender_id和消息中@的用户id
+  const uniqueSenderIds = new Set(messages.map(entry => entry.sender_id));
+  // 从消息内容中提取@的用户id
+  messages.forEach(entry => {
+    const atMatches = entry.content.match(/@(\d+)/g);
+    if (atMatches) {
+      atMatches.forEach(match => {
+        uniqueSenderIds.add(match.substring(1));
+      });
+    }
+  });
 
   // 查询每个sender的群成员信息
   const senderNames = new Map();
@@ -1967,7 +1976,17 @@ async function formatMessagesWithNames(messages: MessageEntry[], session: Sessio
   // 格式化消息内容
   const formattedMessages = messages.map(entry => {
     const name = senderNames.get(entry.sender_id) || entry.sender_name;
-    return `${name}(${entry.sender_id}): ${entry.content}`;
+    // 替换消息中的@标记
+    let content = entry.content;
+    const atMatches = content.match(/@(\d+)/g);
+    if (atMatches) {
+      atMatches.forEach(match => {
+        const atUserId = match.substring(1);
+        const atUserName = senderNames.get(atUserId) || atUserId;
+        content = content.replace(match, `@${atUserName}`);
+      });
+    }
+    return `${name}(${entry.sender_id}): ${content}`;
   });
   if(this.config.detailLog) this.ctx.logger.info('formattedMessages:',formattedMessages)
   return formattedMessages.join('\n');
