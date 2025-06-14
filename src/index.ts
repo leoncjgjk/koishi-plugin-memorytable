@@ -56,6 +56,12 @@ const {
 <div class="memorytable">
 
 ## 更新日志
+<li><strong>v1.4.4</strong>\n
+- 伪人指令增加id转昵称
+</li>
+<details>
+<summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
+<ul>
 <li><strong>v1.4.3</strong>\n
 - 增加特征功能私聊的开关，娱乐功能的开关和一些参数设置\n
 - 修复有人退群后查看好感排行榜报错的问题\n
@@ -67,9 +73,6 @@ const {
 - 吃瓜2指令增加参数userid，只过滤对应用户的聊天消息,多个id可用逗号分隔\n
 - hotfix 日志报错\n
 </li>
-<details>
-<summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
-<ul>
 <li><strong>v1.3.9</strong>\n
 - 增加群聊总结指令，方便吃瓜；2个总结指令，分别是吃瓜和吃瓜2\n
 - 优化一些设置\n
@@ -262,7 +265,7 @@ export const Config = Schema.intersect([
       .default(true)
       .description('是否使用已有的短期记忆（关闭后短期记忆将不会生效）'),
     maxMessagesGroup: Schema.number()
-      .default(500)
+      .default(5000)
       .description('每个群聊聊天记录保存条数(每个群单独算，理论上不能少于短期记忆生成用到记忆条数的2倍）'),
     memoryStMessages: Schema.number()
       .default(30)
@@ -1033,7 +1036,7 @@ export class MemoryTableService extends Service {
             return `当前群组没有历史消息。`;
           }
 
-          const sortedHistory = record[0].history
+          let sortedHistory = record[0].history
             .filter(entry =>
               entry.sender_name !== '机器人' &&
               entry.content &&
@@ -1042,6 +1045,8 @@ export class MemoryTableService extends Service {
             )
             .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
             .slice(0, number);
+
+          sortedHistory = await formatMessagesWithNames.call(this,sortedHistory, session);
 
           const messagesToAnalyze = sortedHistory.map(entry => `${entry.sender_name}：${entry.content}`);
           if (messagesToAnalyze.length < 1) {
@@ -1057,6 +1062,8 @@ export class MemoryTableService extends Service {
             { role: 'system', content: content },
             { role: 'user', content: messagesToAnalyze.join('\n') }
           ];
+
+          if(this.config.detailLog) this.ctx.logger.info('鉴定伪人的消息:',openAIMessages)
 
           // 调用 OpenAI API
           const analysisResult = await callOpenAI.call(this, openAIMessages);
