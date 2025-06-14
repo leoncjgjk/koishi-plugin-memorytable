@@ -1,4 +1,4 @@
-import { Context, Schema, Session, Service, h } from 'koishi'
+import { Context, Schema, Session, Service, h, SchemaService } from 'koishi'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -6,42 +6,154 @@ let extraKBs = []
 // 扩展Koishi事件系统以支持机器人消息事件
 export const name = 'memorytable'
 export const usage = `
-### 本插件为Koishi机器人提供长期记忆功能，已适配的是koishi-plugin-oobabooga-testbot。其他机器人插件可自行调用getMem函数使用。
+<div style="border-radius: 10px; border: 1px solid #ddd; padding: 16px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+  <h2 style="margin-top: 0; color: #4a6ee0;">📌 插件说明</h2>
+  <p>🤖 本插件可以为聊天机器人提供长期记忆功能，也可以独立使用自带指令（如鉴定伪人、吃瓜）</p>
+  <p>✅ 已适配聊天机器人: koishi-plugin-oobabooga-testbot</p>
+  <p>💡 其他机器人插件可添加memorytable为依赖后，通过 getMem 函数来调用</p>
+  <details>
+    <summary style="color: #4a6ee0;">点击此处————查看该函数Api基础示例</summary>
+      <strong>getMem</strong>
+        <pre><code>
+exports.inject = {
+  optional:['memorytable'] //建议添加为可选依赖
+};
 
-## 最近版本的更新日志：
-### v1.3.9
-- 增加群聊总结指令，方便吃瓜；2个总结指令，分别是吃瓜和吃瓜2
-- 优化一些设置
-- 增加日志开关
-- 增加常用指令说明
-### v1.3.5
-- 增加娱乐功能，伪人测试。
-- 如果填写了botPrompt，伪人测试会以此视角分析并总结。
-### v1.3.3
-- 增加知识库功能，可额外配置关键词触发知识库查询。
-- 支持额外知识库文件的配置。
-### v1.3.0
-- （实验性）增加机器人人设功能，在生成记忆时可以基于机器人视角分析。
-### v1.2.3
-- 优化设置选项及默认设置。
-- 长短期记忆优化开关功能。
-- （实验性）对聊天记录中的url进行简化
+const {
+  trait,
+  memory_st,
+  memory_lt,
+  traits,
+  kbs
+} = await ctx.memorytable.getMem(
+  session.userId,
+  session.channelId.toString().replace(/-/g, ''),
+  session
+);</code></pre>
+        调用该函数即可获取机器人的记忆\n
+        函数参数要求：\n
+        1. userId：用户id\n
+        2. groupId：群聊id\n
+        3. session：会话\n
+        函数返回值说明：\n
+        1. trait：当前回话对象的特征\n
+        2. memory_st：当前群聊的短期记忆\n
+        3. memory_lt：当前群聊的长期记忆\n
+        4. traits：当前群聊记录的最近n个人的特征列表\n
+        5. kbs：关键词匹配成功的知识库列表\n
+  </details>
+  <p>🔍 <strong>如有建议和bug</strong>：欢迎前往独奏的GitHub <a href="https://github.com/leoncjgjk/koishi-plugin-memorytable/issues" style="color:#4a6ee0;">反馈</a> 和 <a href="https://github.com/leoncjgjk/koishi-plugin-memorytable/pulls" style="color:#4a6ee0;">提交pr</a></p>
+</div>
+<style>
+.memorytable {
+  background-color: var(--k-side-bg);
+  padding: 1px 24px;
+  border-radius: 4px;
+  border-left: 4px solid var(--k-color-primary);
+}
+</style>
 
-## 常用指令说明：
-- 鉴定伪人 [可选参数：条数]
-娱乐功能：调用最近x条聊天记录，判定其中每个人的伪人概率。
-- 吃瓜、群聊总结 [可选参数：prompt]
-娱乐功能：总结最近群里在说什么，可写参数作为prompt，以要求AI进行针对性回答，例如："吃瓜 刚才有几个人复读了？"、"吃瓜 刚才都是谁在吵架？谁起的头？"。
-- 吃瓜2、群聊总结2 [可选参数：总结时间、prompt]
-娱乐功能：总结最近群里在说什么，可写参数要求总结最近x分钟的内容，默认为10分钟。可写参数作为prompt。
+<div class="memorytable">
+
+## 更新日志
+<li><strong>v1.4.0</strong>\n
+- 增加特征功能私聊的开关，娱乐功能的开关和一些参数设置\n
+- 修复有人退群后查看好感排行榜报错的问题\n
+- 优化插件主界面\n
+</li>
+<details>
+<summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
+<ul>
+<li><strong>v1.3.9</strong>\n
+- 增加群聊总结指令，方便吃瓜；2个总结指令，分别是吃瓜和吃瓜2\n
+- 优化一些设置\n
+- 增加日志开关\n
+- 增加常用指令说明\n
+</li>
+<li><strong>v1.3.5</strong>\n
+- 增加娱乐功能，伪人测试。\n
+- 如果填写了botPrompt，伪人测试会以此视角分析并总结。\n
+</li>
+<li><strong>v1.3.3</strong>\n
+- 增加知识库功能，可额外配置关键词触发知识库查询。\n
+- 支持额外知识库文件的配置。\n
+</li>
+<li><strong>v1.3.0</strong>\n
+- （实验性）增加机器人人设功能，在生成记忆时可以基于机器人视角分析。\n
+</li>
+<li><strong>v1.2.3</strong>\n
+- 优化设置选项及默认设置。\n
+- 长短期记忆优化开关功能。\n
+- （实验性）对聊天记录中的url进行简化\n
+</li>
+<li><strong>v1.2.2</strong>\n
+- 开放短期记忆的自定义配置\n
+</li>
+<li><strong>v1.2.1</strong>\n
+- 优化设置分类\n
+</li>
+<li><strong>v1.2.0</strong>\n
+- 扩展trait为traits，支持同时查询多人trait（oob插件需不低于5.6.5）\n
+</li>
+<li><strong>v1.1.4</strong>\n
+- 完整适配oob，支持切换人设自动清除记录（oob插件需不低于5.6.1）\n
+</li>
+<li><strong>v1.1.0</strong>\n
+- 完成短期记忆和长期记忆模块\n
+</li>
+<li><strong>v1.0.0</strong>\n
+- 稳定版本，支持查询个人trait\n
+</li>
+</ul>
+</details>
+
+## 常用指令
 - 好感度
+- 好感排名/差评排名
+- 查看记忆
+- 记忆备份/记忆恢复
+- 伪人鉴定
+- 吃瓜/吃瓜2
+
+<details>
+<summary style="color: #4a6ee0;">点击此处————查看指令参数说明</summary>
+<ul>
+<li><strong>好感度:</strong>
+<pre><code>好感度</code></pre>
 查询机器人对自己的好感度
-- 好感排名 [可选参数：前x名]
-查询群内好感排名
-- mem.mem [可选参数：群id、用户id]
+</li>
+<li><strong>好感排名/差评排名:</strong>
+<pre><code>好感排名 [前x名]
+差评排名 [前x名]</code></pre>
+查询群内正的好感排名或负的好感排名
+</li>
+<li><strong>查看记忆:</strong>
+<pre><code>mem.mem [群id] [用户id]</code></pre>
 查询机器人生成的指定用户记忆，群id填-1代表本群。例如：mem mem -1 xxxxx
-- mem.backup/restore
+</li>
+<li><strong>备份/恢复:</strong>
+<pre><code>mem.backup
+mem.restore</code></pre>
 备份/恢复备份，生成在插件目录的backup文件夹中，方便查看当前数据库的完整数据。
+</li>
+<li><strong>伪人鉴定:</strong>
+<pre><code>鉴定伪人 [条数]</code></pre>
+娱乐功能：调用最近x条聊天记录，判定其中每个人的伪人概率。
+</li>
+<li><strong>群聊总结1:</strong>
+<pre><code>吃瓜 [prompt]
+群聊总结 [prompt]</code></pre>
+娱乐功能：总结最近群里在说什么，可写参数作为prompt，以要求AI进行针对性回答，例如："吃瓜 刚才有几个人复读了？"、"吃瓜 刚才都是谁在吵架？谁起的头？"。
+</li>
+<li><strong>群聊总结2:</strong>
+<pre><code>吃瓜2 [总结时间] [prompt]
+群聊总结2 [总结时间] [prompt]</code></pre>
+娱乐功能：总结最近群里在说什么，可写参数要求总结最近x分钟的内容，默认为10分钟。可写参数作为prompt。例如："吃瓜2 120 刚才都有谁在复读刷屏？"
+</li>
+</ul>
+</details>
+
+</div>
 `
 
 export interface Config {
@@ -74,6 +186,7 @@ export interface Config {
   KBExtraPath?: string
   KBMaxNum?: number
   KBExtraFileName?: Record<string, string>
+  enablePrivateTrait?: boolean
 }
 
 export const Config = Schema.intersect([
@@ -113,6 +226,9 @@ export const Config = Schema.intersect([
     botPrompt: Schema.string().experimental()
      .default('')
      .description('机器人的人设,用于生成记忆时增加主观性。留空则为第三方客观视角。'),
+    enablePrivateTrait: Schema.boolean()
+      .default(false)
+      .description('是否开启私聊trait，关闭后私聊不再生成'),
   }).description('功能1：特征信息设置'),
   Schema.object({
     enableMemSt: Schema.boolean()
@@ -190,6 +306,23 @@ export const Config = Schema.intersect([
      .default(5)
      .description('同时触发知识库的最大条目数')
   }).description('功能4：知识库设置'),
+  Schema.object({
+    enableHuman: Schema.boolean()
+      .default(false)
+      .description('是否开启伪人鉴定指令'),
+    humanUseBotPrompt: Schema.boolean()
+      .default(true)
+      .description('伪人鉴定指令时，是否使用机器人人设（botPrompt）。'),
+    enableSum: Schema.boolean()
+      .default(true)
+      .description('是否开启群聊总结指令（吃瓜1和吃瓜2）'),
+    sumUseBotPrompt: Schema.boolean()
+      .default(true)
+      .description('群聊总结指令时，是否使用机器人人设（botPrompt）。'),
+    sum2ChunkSize: Schema.number()
+      .default(4000)
+      .description('群聊总结2指令，切片的字数（不要超过模型上下文，还有空出来一些字数给prompt和人设）'),
+  }).description('功能5：娱乐指令'),
   Schema.object({
     botMesReport: Schema.boolean()
      .default(false)
@@ -388,7 +521,7 @@ export class MemoryTableService extends Service {
         rankings = rankings
           .filter(rank => rank.like >= 0)
           .sort((a, b) => b.like - a.like)
-          .slice(0, maxnumber >= 5 && maxnumber <= 50 ? maxnumber : 10)
+          .slice(0, maxnumber >= 5 && maxnumber <= 200 ? maxnumber : 10)
 
         if (rankings.length === 0) {
           return '当前群组还没有好感度记录~'
@@ -396,10 +529,14 @@ export class MemoryTableService extends Service {
 
         // 获取群成员信息并构建排名消息
         const rankMessages = await Promise.all(rankings.map(async (rank, index) => {
-          const member = await session.bot.getGuildMember?.(session.guildId, rank.userId)
-          const nickname = member.nick || member?.user?.name || rank.userId
-
-          return `${index + 1}. ${nickname} 好感度：${rank.like}`
+          try{
+            const member = await session.bot.getGuildMember?.(session.guildId, rank.userId)
+            const nickname = member?.nick || member?.user?.name || rank.userId
+            return `${index + 1}. ${nickname} 好感度：${rank.like}`
+          }catch(error){
+            this.ctx.logger.error(`获取群成员${rank.userId}信息失败: ${error.message}`)
+            return `${index + 1}. ${rank.userId} 好感度：${rank.like}`
+          }
         }))
 
         return ['当前群组好感度排行榜：', ...rankMessages].join('\n')
@@ -459,17 +596,21 @@ export class MemoryTableService extends Service {
 
       // 获取群成员信息并构建排名消息
       const rankMessages = await Promise.all(rankings.map(async (rank, index) => {
-        const member = await session.bot.getGuildMember?.(session.guildId, rank.userId)
-
-        const nickname = member.nick || member?.user?.name || rank.userId
-
-        return `${index + 1}. ${nickname} 好感度：${rank.like}`
+        try{
+          const member = await session.bot.getGuildMember?.(session.guildId, rank.userId)
+          const nickname = member?.nick || member?.user?.name || rank.userId
+          return `${index + 1}. ${nickname} 好感度：${rank.like}`
+        }catch(error){
+          this.ctx.logger.error(`获取群成员${rank.userId}信息失败: ${error.message}`)
+          return `${index + 1}. ${rank.userId} 好感度：${rank.like}`
+        }
       }))
 
       return ['当前群组差评排行榜：', ...rankMessages].join('\n')
     })
 
 		ctx.command('mem.mem [groupid:number] [userid:number]',{ authority: 2 })
+      .alias('查看记忆')
       .userFields(['authority'])
       .action(async ({ session }, groupid, userid) => {
         const groupId = String(groupid === -1 || !groupid ? session.guildId || session.channelId || '0' : groupid)
@@ -575,6 +716,7 @@ export class MemoryTableService extends Service {
 			})
     // 添加备份指令
     ctx.command('mem.backup',{ authority: 2 })
+      .alias('记忆备份')
 			.userFields(['authority'])
       .action(async () => {
         return this.backupMem()
@@ -582,6 +724,7 @@ export class MemoryTableService extends Service {
 
     // 添加恢复指令
     ctx.command('mem.restore',{ authority: 2 })
+      .alias('记忆恢复')
 			.userFields(['authority'])
       .action(async ({ session }) => {
         try {
@@ -649,6 +792,10 @@ export class MemoryTableService extends Service {
       .alias('群聊总结','吃瓜')
 			.userFields(['authority'])
       .action(async ({ session }, extraPrompt) => {
+        if(!this.ctx.config.enableSum) {
+          this.ctx.logger.warn('群聊总结指令未开启')
+          return
+        }
         const memoryEntry = await this.ctx.database.get('memory_table', {
           group_id: session.guildId||session.channelId,
           user_id: '0'
@@ -659,7 +806,7 @@ export class MemoryTableService extends Service {
         if(!extraPrompt){
           extraPrompt = '请根据以下内容，说一下最近群里面在聊些什么。\n'
         }
-        if(this.config.botPrompt)
+        if(this.config.sumUseBotPrompt && this.config.botPrompt)
             extraPrompt += `请以此人设的视角进行回复：<人设>${this.config.botPrompt}</人设>。\n`
         let content = [
           // 添加短期记忆内容
@@ -697,6 +844,10 @@ export class MemoryTableService extends Service {
     .alias('群聊总结2','吃瓜2')
     .userFields(['authority'])
     .action(async ({ session }, min,extraPrompt) => {
+      if(!this.ctx.config.enableSum) {
+        this.ctx.logger.warn('群聊总结指令未开启')
+        return
+      }
       const memoryEntry = await this.ctx.database.get('memory_table', {
         group_id: session.guildId||session.channelId,
         user_id: '0'
@@ -707,7 +858,7 @@ export class MemoryTableService extends Service {
       if(!extraPrompt){
         extraPrompt = '请根据以下内容，说一下最近群里面在聊些什么。\n'
       }
-      if(this.config.botPrompt)
+      if(this.config.sumUseBotPrompt && this.config.botPrompt)
           extraPrompt += `请以此人设的视角进行回复：<人设>${this.config.botPrompt}</人设>。\n`
 
       if(!min) min = 10;
@@ -731,7 +882,7 @@ export class MemoryTableService extends Service {
       ].join('')
 
       // 将长文本拆分成不超过4000字的片段
-      const MAX_CHUNK_SIZE = 4000;
+      const MAX_CHUNK_SIZE = this.ctx.config.maxChunkSize || 4000;
       let chunks = [];
       let currentChunk = '';
       let lines = content.split('\n');
@@ -814,6 +965,10 @@ export class MemoryTableService extends Service {
       .alias('鉴定人类','鉴定伪人','人类指数','伪人指数')
 			.userFields(['authority'])
       .action(async ({ session }, number) => {
+        if(!this.ctx.config.enableHuman) {
+          this.ctx.logger.warn('伪人鉴定指令未开启')
+          return
+        }
         if (!number || number > 100 || number < 10) number = 10;
 
         const groupId = session.guildId || session.channelId || '0';
@@ -847,12 +1002,12 @@ export class MemoryTableService extends Service {
           }
           const baseContent = `你是一个资深的伪人鉴定专家。接下来我会给你一些聊天记录，请你分析这些记录中，每一句话分别有多大的概率是伪人说的。请给出其中涉及到的每个人的伪人概率，如果概率大于等于50%则回复格式为"用户名：xx%伪人(不超过15个字的理由)。"，如果小于50%则回复格式为"用户名：xx%伪人。"并且回复时要按照伪人概率从高到低排序。`
 
-          const content = this.config.botPrompt ?
+          const content = (this.config.humanUseBotPrompt && this.config.botPrompt) ?
             `${baseContent}请从此人设的视角分析以及回复，并在回复末尾以此人设的口吻进行总结或调侃。<人设>${this.config.botPrompt}</人设>` :
             baseContent;
 
           const openAIMessages = [
-            { role: 'system', content },
+            { role: 'system', content: content },
             { role: 'user', content: messagesToAnalyze.join('\n') }
           ];
 
@@ -1253,6 +1408,10 @@ export class MemoryTableService extends Service {
 	}
   // 自动更新trait
   private async autoUpdateTrait(user_id,group_id,session) {
+    if(!this.config.enablePrivateTrait && group_id.match('private')){
+      if(this.config.detailLog) this.ctx.logger.info('私聊trait已关闭，跳过')
+      return
+    }
     const memoryEntries = await this.ctx.database.get('memory_table', {
       group_id: group_id,
       user_id: user_id
@@ -1310,8 +1469,19 @@ export class MemoryTableService extends Service {
   }
 
   // 获取用户记忆信息
-  public async getMem(userId: string, groupId: string, session?): Promise<string | Record<string, any>> {
+  /**
+   *
+   * @param userId 用户id
+   * @param groupId 群聊id
+   * @param session 会话
+   * @returns 记忆信息()
+   */
+  public async getMem(userId: string, groupId: string, session?: Session): Promise<string | Record<string, any>> {
     if(this.config.detailLog) this.ctx.logger.info('进入getMem函数')
+    if(!this.config.enablePrivateTrait && groupId.match('private')){
+      if(this.config.detailLog) this.ctx.logger.info('私人群聊，不获取记忆')
+      return {}
+    }
     try {
       const actualGroupId = groupId === '0' ? `private:${userId}` : groupId;
       const [traitMemoryEntry, sharedMemoryEntry] = await Promise.all([
