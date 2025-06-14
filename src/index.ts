@@ -1958,10 +1958,7 @@ async function generateTrait(userId: string, groupId: string,session:Session): P
       return memoryEntry.trait || {}
     }
 
-    const formattedHistory = recentHistory.map(entry => {
-      const tempContent = entry.content.replace(/@\d+\s*/g, '')
-      return `${entry.sender_name}(${entry.sender_id}): ${tempContent}`
-    }).join('\n')
+    const formattedHistory = await formatMessagesWithNames.call(this,recentHistory,session)
 
     const botprompt = await getBotPrompt.call(this,session,groupId)
     // 为每个特征项生成内容
@@ -1973,14 +1970,13 @@ async function generateTrait(userId: string, groupId: string,session:Session): P
       roleContent = roleContent + '\n以下是该机器人的人设，请代入此人设的视角进行分析：<机器人人设>' + botprompt + '</机器人人设>'
     }
     const messages = [
-      { role: 'system', content: roleContent },
-      { role: 'user', content: `聊天记录（其中用户的id是${userId}，机器人的id是${session.bot.selfId}，你要分析的是用户的特征，请注意分辨）：
-${formattedHistory}
-${Object.keys(memoryEntry.trait).length > 0 ? `当前特征：
-${JSON.stringify(memoryEntry.trait, null, 2)}
-` : ''}特征模板：
-${JSON.stringify(this.config.traitTemplate, null, 2)}` }
-    ]
+      { role: 'system', content: roleContent + `\n（强调：聊天记录中，用户的id是${userId}，机器人的id是${session.bot.selfId}，你要分析的是用户${userId}的特征，而不是机器人的，请注意分辨）` },
+      { role: 'user', content: `
+<聊天记录>${formattedHistory}</聊天记录>\n
+${Object.keys(memoryEntry.trait).length > 0 ?`<旧的特征>${JSON.stringify(memoryEntry.trait, null, 2)}</旧的特征>\n` : '\n'}
+<特征模板>${JSON.stringify(this.config.traitTemplate, null, 2)}</特征模板>
+` }
+]
 
     if(this.config.detailLog) this.ctx.logger.info('记忆分析：',messages)
 
