@@ -56,13 +56,15 @@ const {
 <div class="memorytable">
 
 ## 更新日志
-<li><strong>v1.4.1</strong>\n
+<li><strong>v1.4.2</strong>\n
 - 增加特征功能私聊的开关，娱乐功能的开关和一些参数设置\n
 - 修复有人退群后查看好感排行榜报错的问题\n
 - 优化插件主界面\n
 - 增加分群的botPrompt设置\n
 - （实验性）可配置过滤指令名，不加入群聊记录\n
 - 修复部分来源的空消息未过滤掉的问题\n
+- 短期记忆和长期记忆中@id转化为昵称\n
+- 吃瓜2指令增加参数userid，只过滤对应用户的聊天消息,多个id可用逗号分隔\n
 </li>
 <details>
 <summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
@@ -149,9 +151,9 @@ mem.restore</code></pre>
 娱乐功能：总结最近群里在说什么，可写参数作为prompt，以要求AI进行针对性回答，例如："吃瓜 刚才有几个人复读了？"、"吃瓜 刚才都是谁在吵架？谁起的头？"。
 </li>
 <li><strong>群聊总结2:</strong>
-<pre><code>吃瓜2 [总结时间] [prompt]
-群聊总结2 [总结时间] [prompt]</code></pre>
-娱乐功能：总结最近群里在说什么，可写参数要求总结最近x分钟的内容，默认为10分钟。可写参数作为prompt。例如："吃瓜2 120 刚才都有谁在复读刷屏？"
+<pre><code>吃瓜2 [总结时间] [prompt] [userid]
+群聊总结2 [总结时间] [prompt] [userid]</code></pre>
+娱乐功能：总结最近群里在说什么，可写参数要求总结最近x分钟的内容，默认为10分钟。可写参数作为prompt。可写参数userid，只过滤对应用户的聊天消息，多个id用逗号隔开。例如："吃瓜2 120 刚才都有谁在复读刷屏？"，"吃瓜2 120 你认为刚才这两个人谁说的对？ id1,id2"
 </li>
 </ul>
 </details>
@@ -230,15 +232,23 @@ export const Config = Schema.intersect([
       .default(0)
       .description('特征缓存条数(额外发送最近几个人的特征信息。默认为0，代表只发送当前消息对象的特征信息。)'),
     botPrompt: Schema.string()
-     .default('')
-     .description('机器人的人设,用于生成记忆时增加主观性。留空则为第三方客观视角。'),
+      .default('')
+      .description('机器人的人设,用于生成记忆时增加主观性。留空则为第三方客观视角。'),
     botPrompts: Schema.array(Schema.object({
       key:Schema.string().required().description('群聊或私聊id，群聊填群号，私聊填private:用户id'),
       value:Schema.string().required().description('人设')
-    }))
-    .role('table')
-    .description('指定群聊或私聊使用的人设,无匹配结果则使用上面的通用人设。')
-    .default([{key:'',value:''}]),
+      }))
+      .role('table')
+      .description('指定群聊或私聊使用的人设,无匹配结果则使用上面的通用人设。')
+      .default([{key:'',value:''}]),
+    // listenPromptCommand: Schema.array(Schema.object({
+    //   plugin:Schema.string().required().description('插件名'),
+    //   command:Schema.string().required().description('指令名'),
+    //   filesName:Schema.string().required().description('人设文件夹路径'),
+    //   promptArgs:Schema.string().required().description('人设文件内容格式，例如：{name} {prompt}')
+    // })).experimental()
+    //   .default([{plugin:'koishi-plugin-oobabooga-testbot',command:'oob.load',filesName:'lib\\characters',promptArgs:'{name} {prompt}'}])
+    //   .description('监听其他插件的切换人设指令。此功能优先级低于自己配置的人设，只有上面两个设置中botPrompt没填，且botPrompts匹配不到的时候才会用这个。'),
     enablePrivateTrait: Schema.boolean().experimental()
       .default(false)
       .description('是否开启私聊trait，关闭后私聊不再生成'),
@@ -665,7 +675,7 @@ export class MemoryTableService extends Service {
 				if (memoryEntry.memory_st.length > 0) {
 					responseElements.push(h('message', [
 						h('author', {}, '短期记忆'),
-						h('content', {}, memoryEntry.memory_st.join('\n'))
+						h('content', {}, await formatMessagesWithNamesForMemory(session,memoryEntry.memory_st))
 					]))
 				}
 
@@ -673,7 +683,7 @@ export class MemoryTableService extends Service {
 				if (memoryEntry.memory_lt.length > 0) {
 					responseElements.push(h('message', [
 						h('author', {}, '长期记忆'),
-						h('content', {}, memoryEntry.memory_lt.join('\n'))
+						h('content', {}, await formatMessagesWithNamesForMemory(session,memoryEntry.memory_lt))
 					]))
 				}
 
@@ -836,7 +846,7 @@ export class MemoryTableService extends Service {
         let content = [
           // 添加短期记忆内容
           ...(memoryEntry.memory_st && memoryEntry.memory_st.length > 0
-            ? `这是之前群聊记录的概括<概括>${memoryEntry.memory_st.join()}</概括>`
+            ? `这是之前群聊记录的概括<概括>${await formatMessagesWithNamesForMemory(session,memoryEntry.memory_st)}</概括>`
             : ''),
           // 添加历史记录内容
           `这是最近的群聊记录<最近的群聊记录>${await (async () => {
@@ -865,10 +875,10 @@ export class MemoryTableService extends Service {
       })
 
       // 群聊总结指令,只用history总结,可自定义总结之前多少分钟的内容
-    ctx.command('mem.summarize2 [min:number] [extraPrompt:string]',{ authority: 2 })
+    ctx.command('mem.summarize2 [min:number] [extraPrompt:string] [userId:string]',{ authority: 2 })
     .alias('群聊总结2','吃瓜2')
     .userFields(['authority'])
-    .action(async ({ session }, min,extraPrompt) => {
+    .action(async ({ session }, min,extraPrompt,userId) => {
       if(!this.ctx.config.enableSum) {
         this.ctx.logger.warn('群聊总结指令未开启')
         return
@@ -880,12 +890,22 @@ export class MemoryTableService extends Service {
       if (!memoryEntry || ( !memoryEntry.memory_st.length && !memoryEntry.history.length) ) {
         return '还没有群聊记忆'
       }
+      if(userId){
+        // 将逗号分隔的userId转为数组
+        const userIds = userId.split(',').map(id => id.trim());
+        // 从记录中过滤出指定用户id的聊天记录
+        memoryEntry.history = memoryEntry.history.filter(entry => userIds.includes(entry.sender_id));
+        if(this.config.detailLog) this.ctx.logger.info(`吃瓜2过滤id后聊天记录数量为:${memoryEntry.history.length}`)
+        if (memoryEntry.history.length==0) {
+          return `没有查询到${userIds.join(',')}的聊天记录`
+        }
+      }
       if(!extraPrompt){
-        extraPrompt = '请根据以下内容，说一下最近群里面在聊些什么。\n'
+        extraPrompt = '请根据以下内容，说一下最近群里面在聊些什么。'
       }
       const botprompt = await getBotPrompt.call(this,session,memoryEntry.group_id)
       if(this.config.sumUseBotPrompt && botprompt !== '')
-          extraPrompt += `请以此人设的视角进行回复：<人设>${botprompt}</人设>。\n`
+          extraPrompt += `\n请以此人设的视角进行回复：<人设>${botprompt}</人设>。\n`
 
       if(!min) min = 10;
       let content = [
@@ -897,7 +917,7 @@ export class MemoryTableService extends Service {
           // 按时间过滤获取消息
           let messages = memoryEntry.history
             .filter(entry => new Date(entry.timestamp) >= timeThreshold);
-
+          if(this.config.detailLog) this.ctx.logger.info(`吃瓜2过滤时间后聊天记录数量为:${messages.length}`)
           // 如果最近时间段内消息太少，则取最后10条
           if (messages.length < 10) {
             messages = memoryEntry.history.slice(-10);
@@ -1054,6 +1074,13 @@ export class MemoryTableService extends Service {
 		// 监听消息
 		ctx.on('message', async (session: Session) => {
       ctx.logger.info('收到message.content:',session.content)
+      if(this.config.listenPromptCommand){
+        for(let command of this.config.listenPromptCommand){
+          if(session.content.startsWith(command.command)){
+              if(this.config.detailLog) this.ctx.logger.info('收到指令:',session.content)
+            }
+        }
+      }
       if(!config.botMesReport){
         await this.handleMessage(session)
       }else{
@@ -1169,7 +1196,7 @@ export class MemoryTableService extends Service {
           group_id: targetGroupId,
           user_id: targetUserId,
           trait: {},
-            traitBak: {},
+          traitBak: {},
           memory_st: [],
           memory_lt: [],
           history: []
@@ -1590,15 +1617,18 @@ export class MemoryTableService extends Service {
 
       // 处理短期记忆
       if (this.config.enableMemStApi && sharedMemoryEntry?.memory_st?.length > 0) {
-        result.memory_st = sharedMemoryEntry.memory_st
+        result.memory_st = await formatMessagesWithNamesForMemory(
+          session,sharedMemoryEntry.memory_st
           .slice(-this.config.memoryStMesNumUsed)
-          .map(memory => memory.replace(/机器人/g, '我'));
+          .map(memory => memory.replace(/机器人/g, '我'))
+        );
       }
 
       // 处理长期记忆
       if (this.config.enableMemLtApi && sharedMemoryEntry?.memory_lt?.length > 0) {
-        result.memory_lt = sharedMemoryEntry.memory_lt.map(memory =>
-          memory.replace(/机器人/g, '我')
+        result.memory_lt = await formatMessagesWithNamesForMemory(
+          session,sharedMemoryEntry.memory_lt
+          .map(memory => memory.replace(/机器人/g, '我'))
         );
       }
 
@@ -2161,7 +2191,6 @@ async function formatMessagesWithNames(messages: MessageEntry[], session: Sessio
       });
     }
   });
-
   // 查询每个sender的群成员信息
   const senderNames = new Map();
   for (const senderId of uniqueSenderIds) {
@@ -2194,6 +2223,51 @@ async function formatMessagesWithNames(messages: MessageEntry[], session: Sessio
   return formattedMessages.join('\n');
 }
 
+//提取记忆时格式化记录，替换id为名称
+async function formatMessagesWithNamesForMemory(session: Session, memory: string[]): Promise<string> {
+  const uniqueSenderIds = new Set<string>();
+  // 从消息内容中提取@的用户id
+  memory.forEach(entry => {
+    const atMatches = entry.match(/@(\d+)/g);
+    if (atMatches) {
+      atMatches.forEach(match => {
+        uniqueSenderIds.add(match.substring(1));
+      });
+    }
+  });
+  if(uniqueSenderIds.size === 0) return memory.join('\n')
+
+  // 查询每个sender的群成员信息
+  const senderNames = new Map();
+  for (const senderId of uniqueSenderIds) {
+    try {
+      const member = await session.bot.getGuildMember?.(session.guildId, senderId);
+      if (member) {
+        senderNames.set(senderId, member.nick || member?.user?.name);
+      }
+    } catch (error) {
+      this.ctx.logger.warn(`获取用户 ${senderId} 的群成员信息失败:`, error);
+    }
+  }
+
+  const formattedMemory = memory.map(entry => {
+    // 替换消息中的@标记
+    let content = entry;
+    const atMatches = content.match(/@(\d+)/g);
+    if (atMatches) {
+      atMatches.forEach(match => {
+        const atUserId = match.substring(1);
+        const atUserName = senderNames.get(atUserId) || atUserId;
+        content = content.replace(match, `@${atUserName}`);
+      });
+    }
+    return content
+  });
+  if(this.config.detailLog) this.ctx.logger.info('formattedMemory:',formattedMemory)
+  return formattedMemory.join('\n');
+
+}
+
 // 返回botPrompt
 async function getBotPrompt(this: MemoryTableService, session: Session, groupid?: number):Promise<string>{
   const groupId = String(groupid === undefined ? session.guildId || session.channelId || '0' : groupid)
@@ -2211,6 +2285,35 @@ async function getBotPrompt(this: MemoryTableService, session: Session, groupid?
     }
   }
   return this.config.botPrompt
+}
+
+// 图片转base64
+async function Image_to_Base64(imageUrls, ctx, maxAttempts = 3, retryDelay = 500) {
+  if (!Array.isArray(imageUrls)) {
+      imageUrls = [imageUrls];
+  }
+  const base64Images = [];
+  for (const imageUrl of imageUrls) {
+      let base64Image = null;
+      let downloadSuccess = false;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+              const response = await ctx.http.file(imageUrl);
+              const base64String = Buffer.from(response.data).toString('base64');
+              base64Image = `data:image/jpeg;base64,${base64String}`;
+              downloadSuccess = true;
+              break;
+          } catch (error) {
+              this.ctx.logger.warn(`下载图片失败 (尝试 ${attempt}/${maxAttempts}): ${imageUrl}`, error);
+              await new Promise(resolve => setTimeout(resolve, retryDelay));
+          }
+      }
+      if (!downloadSuccess) {
+        this.ctx.logger.error(`下载图片失败: ${imageUrl}`);
+      }
+      base64Images.push(base64Image);
+  }
+  return base64Images;
 }
 
 // 导出插件
