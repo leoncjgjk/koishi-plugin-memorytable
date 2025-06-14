@@ -56,10 +56,13 @@ const {
 <div class="memorytable">
 
 ## 更新日志
-<li><strong>v1.4.0</strong>\n
+<li><strong>v1.4.1</strong>\n
 - 增加特征功能私聊的开关，娱乐功能的开关和一些参数设置\n
 - 修复有人退群后查看好感排行榜报错的问题\n
 - 优化插件主界面\n
+- 增加分群的botPrompt设置
+- （实验性）可配置过滤指令名，不加入群聊记录
+- 修复部分来源的空消息未过滤掉的问题
 </li>
 <details>
 <summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
@@ -179,6 +182,7 @@ export interface Config {
   botMesReport?: boolean
   debugMode?: boolean
   botPrompt?: string
+  botPrompts?: Record<string, string>
   memoryStUseBotPrompt?: boolean
   memoryLtUseBotPrompt?: boolean
   enableExtraKB?: boolean
@@ -187,6 +191,8 @@ export interface Config {
   KBMaxNum?: number
   KBExtraFileName?: Record<string, string>
   enablePrivateTrait?: boolean
+  enableFilterCommand?: boolean
+  filterCommand?: string
 }
 
 export const Config = Schema.intersect([
@@ -223,10 +229,17 @@ export const Config = Schema.intersect([
     traitCacheNum: Schema.number()
       .default(0)
       .description('特征缓存条数(额外发送最近几个人的特征信息。默认为0，代表只发送当前消息对象的特征信息。)'),
-    botPrompt: Schema.string().experimental()
+    botPrompt: Schema.string()
      .default('')
      .description('机器人的人设,用于生成记忆时增加主观性。留空则为第三方客观视角。'),
-    enablePrivateTrait: Schema.boolean()
+    botPrompts: Schema.array(Schema.object({
+      key:Schema.string().required().description('群聊或私聊id，群聊填群号，私聊填private:用户id'),
+      value:Schema.string().required().description('人设')
+    }))
+    .role('table')
+    .description('指定群聊或私聊使用的人设,无匹配结果则使用上面的通用人设。')
+    .default([{key:'',value:''}]),
+    enablePrivateTrait: Schema.boolean().experimental()
       .default(false)
       .description('是否开启私聊trait，关闭后私聊不再生成'),
   }).description('功能1：特征信息设置'),
@@ -277,7 +290,7 @@ export const Config = Schema.intersect([
     enableKB: Schema.boolean()
       .default(false)
       .description('是否开启知识库功能。'),
-      knowledgeBooks: Schema.array(Schema.object(
+    knowledgeBooks: Schema.array(Schema.object(
         {
           keyword: Schema.string().required(),
           content: Schema.string().required()
@@ -332,7 +345,13 @@ export const Config = Schema.intersect([
      .description('是否记录并在koishi控制台显示每一步的日志（关闭后只显示报错。开启可方便观察插件运行情况。）'),
     debugMode: Schema.boolean()
      .default(false)
-     .description('是否开启调试模式')
+     .description('是否开启调试模式'),
+    enableFilterCommand: Schema.boolean()
+     .default(true)
+     .description('启用文本过滤。过滤指定开头的聊天记录,使之不进入聊天记录。主要用于指令过滤，可能会导致一些正常聊天也过滤掉了，请谨慎填写下面的列表。'),
+    filterCommand: Schema.string().experimental()
+     .default('mem, 好感度, 好感排, 差评排, 查看记忆, 记忆备份, 记忆恢复, 群聊总结, 吃瓜 ,吃瓜2')
+     .description('用逗号分隔。从开头匹配，例如填写了123，则1234也一样会被过滤掉。容易误判且有参数的，可以加个空格增加匹配度。'),
   }).description('高级设置')
 ])
 
@@ -374,8 +393,13 @@ export interface MemoryTableEntry {
 export class MemoryTableService extends Service {
 	// 过滤特殊消息内容
 	private filterMessageContent(content: string): string {
-		// 如果是mem指令，返回空字符串
-		if (content.trim().startsWith('mem')) {
+		// 如果是mem指令或其别名，返回空字符串
+		const memCommands = ['mem']
+    if(this.config.enableFilterCommand) {
+      memCommands.push(...this.config.filterCommand.split(','))
+    }
+		if (memCommands.some(cmd => content.startsWith(cmd))) {
+      if(this.config.detailLog) this.ctx.logger.info(`检测到指令：${content}，不保存到聊天记录`)
 			return ''
 		}
     content = this.replaceUrlsWithSiteNames(content)
@@ -806,8 +830,9 @@ export class MemoryTableService extends Service {
         if(!extraPrompt){
           extraPrompt = '请根据以下内容，说一下最近群里面在聊些什么。\n'
         }
-        if(this.config.sumUseBotPrompt && this.config.botPrompt)
-            extraPrompt += `请以此人设的视角进行回复：<人设>${this.config.botPrompt}</人设>。\n`
+        const botprompt = await getBotPrompt.call(this,session,memoryEntry.group_id)
+        if(this.config.sumUseBotPrompt && botprompt !== '')
+            extraPrompt += `请以此人设的视角进行回复：<人设>${botprompt}</人设>。\n`
         let content = [
           // 添加短期记忆内容
           ...(memoryEntry.memory_st && memoryEntry.memory_st.length > 0
@@ -858,8 +883,9 @@ export class MemoryTableService extends Service {
       if(!extraPrompt){
         extraPrompt = '请根据以下内容，说一下最近群里面在聊些什么。\n'
       }
-      if(this.config.sumUseBotPrompt && this.config.botPrompt)
-          extraPrompt += `请以此人设的视角进行回复：<人设>${this.config.botPrompt}</人设>。\n`
+      const botprompt = await getBotPrompt.call(this,session,memoryEntry.group_id)
+      if(this.config.sumUseBotPrompt && botprompt !== '')
+          extraPrompt += `请以此人设的视角进行回复：<人设>${botprompt}</人设>。\n`
 
       if(!min) min = 10;
       let content = [
@@ -1001,9 +1027,9 @@ export class MemoryTableService extends Service {
             return '未能提取到有效的历史消息内容。';
           }
           const baseContent = `你是一个资深的伪人鉴定专家。接下来我会给你一些聊天记录，请你分析这些记录中，每一句话分别有多大的概率是伪人说的。请给出其中涉及到的每个人的伪人概率，如果概率大于等于50%则回复格式为"用户名：xx%伪人(不超过15个字的理由)。"，如果小于50%则回复格式为"用户名：xx%伪人。"并且回复时要按照伪人概率从高到低排序。`
-
-          const content = (this.config.humanUseBotPrompt && this.config.botPrompt) ?
-            `${baseContent}请从此人设的视角分析以及回复，并在回复末尾以此人设的口吻进行总结或调侃。<人设>${this.config.botPrompt}</人设>` :
+          const botprompt = await getBotPrompt.call(this,session,groupId)
+          const content = (this.config.humanUseBotPrompt && botprompt !== '') ?
+            `${baseContent}请从此人设的视角分析以及回复，并在回复末尾以此人设的口吻进行总结或调侃。<人设>${botprompt}</人设>` :
             baseContent;
 
           const openAIMessages = [
@@ -1091,7 +1117,7 @@ export class MemoryTableService extends Service {
         timestamp: new Date(),
         used: false
       }
-      if(groupMessageEntry.content === '') return // 如果过滤后内容为空，则不保存
+      if(groupMessageEntry.content == '') return // 如果过滤后内容为空，则不保存
 
       let groupMemoryEntry = await this.ctx.database.get('memory_table', {
         group_id: groupChatGroupId,
@@ -1131,7 +1157,7 @@ export class MemoryTableService extends Service {
         timestamp: new Date(),
         used: false
       }
-      if(messageEntry.content === '') return
+      if(messageEntry.content == '') return
       // 获取或创建记忆表
       let memoryEntry = await this.ctx.database.get('memory_table', {
         group_id: targetGroupId,
@@ -1198,7 +1224,7 @@ export class MemoryTableService extends Service {
 					timestamp: new Date(),
           used: false
 				}
-        if(messageEntry.content === '') return
+        if(messageEntry.content == '') return
 				// 获取或创建记忆表
 				let memoryEntry = await this.ctx.database.get('memory_table', {
 					group_id: targetGroupId,
@@ -1235,6 +1261,9 @@ export class MemoryTableService extends Service {
 					timestamp: new Date(),
           used: false
 				}
+
+        if(messageEntry.content == '') return
+
         if(this.config.detailLog) this.ctx.logger.info('messageEntry：',messageEntry)
 
 				// 获取或创建记忆表
@@ -1279,7 +1308,7 @@ export class MemoryTableService extends Service {
         timestamp: new Date(),
         used: false // 群聊总记录的消息初始状态也为未使用
       }
-
+      if(groupMessageEntry.content == '') return
       let groupMemoryEntry = await this.ctx.database.get('memory_table', {
         group_id: groupChatGroupId,
         user_id: '0' // user_id 为 '0' 代表群聊总记录
@@ -1307,13 +1336,13 @@ export class MemoryTableService extends Service {
         if (unusedMessagesCount >= this.config.memoryStMessages) {
           this.generatingSummaryFor.add(groupChatGroupId)
           if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupChatGroupId} 满足生成总结条件，开始生成...`)
-          generateSummary.call(this, groupChatGroupId)
+          generateSummary.call(this, session, groupChatGroupId)
             .then(summary => {
               if (summary) {
                 if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupChatGroupId} 总结生成成功。`)
                 // 在短期记忆生成成功时，调用长期记忆生成
                 if(this.config.enableMemLt){
-                  generateLongTermMemory.call(this, groupChatGroupId)
+                  generateLongTermMemory.call(this, session, groupChatGroupId)
                   .then(ltSummary => {
                     if (ltSummary) {
                       if(this.config.detailLog) this.ctx.logger.info(`群聊 ${groupChatGroupId} 长期记忆生成成功。`)
@@ -1677,7 +1706,7 @@ async function callOpenAI(messages: Array<{ role: string, content: string }>, ma
 }
 
 //生成长期记忆
-async function generateLongTermMemory(groupId: string): Promise<string> {
+async function generateLongTermMemory(session: Session,groupId: string): Promise<string> {
   try {
     // 获取群聊的记忆条目，user_id 为 '0' 代表群聊的整体记忆
     const memoryEntry = await this.ctx.database.get('memory_table', {
@@ -1712,8 +1741,9 @@ async function generateLongTermMemory(groupId: string): Promise<string> {
     }).join('\n')
 
     let systemContent = this.config.memoryLtPrompt
-    if(this.config.botPrompt!==''){
-      systemContent = systemContent + '\n以下是该机器人的人设，请代入此人设的视角进行分析：<机器人人设>' + this.config.botPrompt + '</机器人人设>'
+    const botprompt = await getBotPrompt.call(this,session,groupId)
+    if(botprompt!==''){
+      systemContent = systemContent + '\n以下是该机器人的人设，请代入此人设的视角进行分析：<机器人人设>' + botprompt + '</机器人人设>'
     }
     let userContent = `这是相关的聊天记录：\n${formattedHistory}`
 
@@ -1766,7 +1796,7 @@ async function generateLongTermMemory(groupId: string): Promise<string> {
 }
 
 //生成群聊短期记录总结的工具函数
-async function generateSummary(groupId: string): Promise<string> {
+async function generateSummary(session: Session,groupId: string): Promise<string> {
   try {
     // 获取群聊的记忆条目，user_id 为 '0' 代表群聊的整体记忆
     const memoryEntry = await this.ctx.database.get('memory_table', {
@@ -1798,8 +1828,9 @@ async function generateSummary(groupId: string): Promise<string> {
     }).join('\n')
 
     let systemContent = this.config.memoryStPrompt
-    if(this.config.botPrompt!==''){
-      systemContent = systemContent + '\n以下是该机器人的人设，请代入此人设的视角进行分析：<机器人人设>' + this.config.botPrompt + '</机器人人设>'
+    const botprompt = await getBotPrompt.call(this,session,groupId)
+    if(botprompt!==''){
+      systemContent = systemContent + '\n以下是该机器人的人设，请代入此人设的视角进行分析：<机器人人设>' + botprompt + '</机器人人设>'
     }
     let userContent = `这是最近的聊天记录：\n${formattedHistory}\n\n请根据以上信息，生成新的聊天记录总结。`
 
@@ -1894,13 +1925,14 @@ async function generateTrait(userId: string, groupId: string,session:Session): P
       return `${entry.sender_name}(${entry.sender_id}): ${tempContent}`
     }).join('\n')
 
+    const botprompt = await getBotPrompt.call(this,session,groupId)
     // 为每个特征项生成内容
     let trait: Record<string, string> = {}
     let roleContent = Object.keys(memoryEntry.trait).length > 0 ?
     '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。当前已有特征信息，请基于现有特征进行分析。如果没有充分的聊天记录依据，请保持原有特征不变。请按照特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' :
     '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。请按照提供的特征模板进行分析，并以JSON格式返回结果，不需要解释理由。'
-    if(this.config.botPrompt!==''){
-      roleContent = roleContent + '\n以下是该机器人的人设，请代入此人设的视角进行分析：<机器人人设>' + this.config.botPrompt + '</机器人人设>'
+    if(botprompt!==''){
+      roleContent = roleContent + '\n以下是该机器人的人设，请代入此人设的视角进行分析：<机器人人设>' + botprompt + '</机器人人设>'
     }
     const messages = [
       { role: 'system', content: roleContent },
@@ -2161,6 +2193,26 @@ async function formatMessagesWithNames(messages: MessageEntry[], session: Sessio
   if(this.config.detailLog) this.ctx.logger.info('formattedMessages:',formattedMessages)
   return formattedMessages.join('\n');
 }
+
+// 返回botPrompt
+async function getBotPrompt(this: MemoryTableService, session: Session, groupid?: number):Promise<string>{
+  const groupId = String(groupid === undefined ? session.guildId || session.channelId || '0' : groupid)
+  const botPrompts = this.config.botPrompts
+  for (const botPrompt of botPrompts) {
+    if(botPrompt.key === groupId){
+      if(this.config.detailLog) this.ctx.logger.info(`${groupId}匹配专属人设:${botPrompt.value.slice(0,20)}...`)
+      return botPrompt.value
+    }else{
+      if(this.config.botPrompt){
+        return this.config.botPrompt
+      }else{
+        return ''
+      }
+    }
+  }
+  return this.config.botPrompt
+}
+
 // 导出插件
 export async function apply(ctx: Context, config: Config) {
   // 直接创建服务实例
