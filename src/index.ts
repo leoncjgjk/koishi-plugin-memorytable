@@ -56,7 +56,7 @@ const {
 <div class="memorytable">
 
 ## 更新日志
-<li><strong>v1.4.2</strong>\n
+<li><strong>v1.4.3</strong>\n
 - 增加特征功能私聊的开关，娱乐功能的开关和一些参数设置\n
 - 修复有人退群后查看好感排行榜报错的问题\n
 - 优化插件主界面\n
@@ -65,6 +65,7 @@ const {
 - 修复部分来源的空消息未过滤掉的问题\n
 - 短期记忆和长期记忆中@id转化为昵称\n
 - 吃瓜2指令增加参数userid，只过滤对应用户的聊天消息,多个id可用逗号分隔\n
+- hotfix 日志报错\n
 </li>
 <details>
 <summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
@@ -1685,7 +1686,7 @@ export class MemoryTableService extends Service {
       //if(this.config.detailLog) this.ctx.logger.info(`用户 ${userId} 在群组 ${actualGroupId} 中获取到的记忆信息：`, result);
       return result;
     } catch (error) {
-      this.ctx.logger.error(`获取记忆信息失败: ${error.message}`);
+      this.ctx.logger.error(`获取记忆信息失败: ${error.message}\nerror.stack:${error.stack}`);
       return '';
     }
   }
@@ -2219,7 +2220,8 @@ async function formatMessagesWithNames(messages: MessageEntry[], session: Sessio
     }
     return `${name}(${entry.sender_id}): ${content}`;
   });
-  if(this.config.detailLog) this.ctx.logger.info('formattedMessages:',formattedMessages)
+
+  // if(this.config.detailLog) this.ctx.logger.info('formattedMessages:',formattedMessages)
   return formattedMessages.join('\n');
 }
 
@@ -2263,7 +2265,7 @@ async function formatMessagesWithNamesForMemory(session: Session, memory: string
     }
     return content
   });
-  if(this.config.detailLog) this.ctx.logger.info('formattedMemory:',formattedMemory)
+  //if(this.config.detailLog) this.ctx.logger.info('formattedMemory:',formattedMemory)
   return formattedMemory.join('\n');
 
 }
