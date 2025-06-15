@@ -56,11 +56,13 @@ const {
 <div class="memorytable">
 
 ## 更新日志
-<li><strong>v1.4.4</strong>\n
+<li><strong>v1.4.5</strong>\n
 - 伪人指令增加id转昵称\n
 - 优化trait生成的提示词模板，以及id转昵称\n
 - 修复群聊原始记录保存上限错误的问题\n
 - 增加一些工具函数，吃瓜2指令调用时可传入时间,并且智能判断是否在聊天记录内添加id\n
+- hotfix伪人指令消息类型错误\n
+- 吃瓜2指令时间参数改为字符串，支持a和a,b格式，过滤0~a分钟或a到b分钟的内容\n
 </li>
 <details>
 <summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
@@ -162,7 +164,7 @@ mem.restore</code></pre>
 <pre><code>吃瓜2 [总结时间] [prompt] [聊天记录附带时间戳] [userid]
 群聊总结2 [总结时间] [prompt] [聊天记录附带时间戳] [userid]</code></pre>
 娱乐功能：总结最近群里在说什么。\n
-[总结时间]可选参数，要求总结最近x分钟的内容，默认为10分钟。\n
+[总结时间]可选参数，可写一个数字a或者两个数字a,b。分别代表总结最近a分钟的内容或a到b分钟区间的内容。默认为10分钟。\n
 [prompt]可选参数作为prompt，以要求AI进行针对性回答。\n
 [聊天记录附带时间戳]可选参数，是否在聊天记录中附带时间戳，默认为false。\n
 [userid]可选参数，只过滤对应用户的聊天消息，多个id用逗号隔开。\n
@@ -890,7 +892,7 @@ export class MemoryTableService extends Service {
       })
 
       // 群聊总结指令,只用history总结,可自定义总结之前多少分钟的内容
-    ctx.command('mem.summarize2 [min:number] [extraPrompt:string] [withTime:boolean] [userId:string]',{ authority: 2 })
+    ctx.command('mem.summarize2 [min:string] [extraPrompt:string] [withTime:boolean] [userId:string]',{ authority: 2 })
     .alias('群聊总结2','吃瓜2')
     .userFields(['authority'])
     .action(async ({ session }, min,extraPrompt,withTime,userId) => {
@@ -922,19 +924,34 @@ export class MemoryTableService extends Service {
       if(this.config.sumUseBotPrompt && botprompt !== '')
           extraPrompt += `\n请以此人设的视角进行回复：<人设>${botprompt}</人设>。\n`
 
-      if(!min) min = 10;
+      if(!min) min = "10";
       let content = [
         `这是最近的群聊记录<最近的群聊记录>${await (async () => {
           const now = new Date();
-          // 默认获取最近10分钟的记录
-          const timeThreshold = new Date(now.getTime() - min * 60 * 1000);
-          // if(this.config.detailLog) this.ctx.logger.info(`吃瓜2指令当前时间为:${now},计算后过滤的时间戳为:${timeThreshold}`)
 
-          // 按时间过滤获取消息
+          // 解析时间范围
+          let startTime: Date, endTime: Date;
+          const times = min.split(',').map(t => parseInt(t));
+
+          if(times.length === 2) {
+            // 如果是两个数字，过滤a到b分钟的内容
+            startTime = new Date(now.getTime() - times[1] * 60 * 1000);
+            endTime = new Date(now.getTime() - times[0] * 60 * 1000);
+          } else {
+            // 如果是一个数字，过滤最近x分钟的内容
+            startTime = new Date(now.getTime() - times[0] * 60 * 1000);
+            endTime = now;
+          }
+
+          // 按时间范围过滤获取消息
           let messages = memoryEntry.history
-            .filter(entry => new Date(entry.timestamp) >= timeThreshold);
+            .filter(entry => {
+              const timestamp = new Date(entry.timestamp);
+              return timestamp >= startTime && timestamp <= endTime;
+            });
+
           if(this.config.detailLog) this.ctx.logger.info(`吃瓜2过滤时间后聊天记录数量为:${messages.length}`)
-          // 如果最近时间段内消息太少，则取最后10条
+          // 如果时间段内消息太少，则取最后10条
           if (messages.length < 10) {
             messages = memoryEntry.history.slice(-10);
           }
@@ -1058,13 +1075,14 @@ export class MemoryTableService extends Service {
             .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
             .slice(0, number);
 
-          sortedHistory = await formatMessagesWithNames.call(this,sortedHistory, session);
-
-          const messagesToAnalyze = sortedHistory.map(entry => `${entry.sender_name}：${entry.content}`);
-          if (messagesToAnalyze.length < 1) {
-            return '未能提取到有效的历史消息内容。';
+          if (sortedHistory.length < 1) {
+              return '未能提取到有效的历史消息内容。';
           }
-          const baseContent = `你是一个资深的伪人鉴定专家。接下来我会给你一些聊天记录，请你分析这些记录中，每一句话分别有多大的概率是伪人说的。请给出其中涉及到的每个人的伪人概率，如果概率大于等于50%则回复格式为"用户名：xx%伪人(不超过15个字的理由)。"，如果小于50%则回复格式为"用户名：xx%伪人。"并且回复时要按照伪人概率从高到低排序。`
+
+          const messagesToAnalyze = await formatMessagesWithNames.call(this,sortedHistory, session);
+
+
+          const baseContent = `你是一个资深的伪人鉴定专家。接下来我会给你一些聊天记录，请你分析这些记录中，每个人是伪人的概率，回复格式为"用户名：xx%概率为伪人(不超过15个字的理由)。"回复时要按照伪人概率从高到低排序。`
           const botprompt = await getBotPrompt.call(this,session,groupId)
           const content = (this.config.humanUseBotPrompt && botprompt !== '') ?
             `${baseContent}请从此人设的视角分析以及回复，并在回复末尾以此人设的口吻进行总结或调侃。<人设>${botprompt}</人设>` :
@@ -1072,7 +1090,7 @@ export class MemoryTableService extends Service {
 
           const openAIMessages = [
             { role: 'system', content: content },
-            { role: 'user', content: messagesToAnalyze.join('\n') }
+            { role: 'user', content: messagesToAnalyze }
           ];
 
           if(this.config.detailLog) this.ctx.logger.info('鉴定伪人的消息:',openAIMessages)
