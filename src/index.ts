@@ -918,20 +918,20 @@ export class MemoryTableService extends Service {
         }
       }
       if(!extraPrompt){
-        extraPrompt = '请根据以下内容，说一下最近群里面在聊些什么。'
+        extraPrompt = `请根据群聊记录，说一下这个时间段内群里面在聊些什么。回复时不要用"最近x分钟、xx分钟到xx分钟"这种描述方式，请合理的转化为"x个小时前/x分钟前、最近x~x小时"等这种更加符合人类叙述习惯的方式。`
       }
       const botprompt = await getBotPrompt.call(this,session,memoryEntry.group_id)
       if(this.config.sumUseBotPrompt && botprompt !== '')
           extraPrompt += `\n请以此人设的视角进行回复：<人设>${botprompt}</人设>。\n`
 
       if(!min) min = "10";
+      const times = min.split(',').map(t => parseInt(t));
       let content = [
-        `这是最近的群聊记录<最近的群聊记录>${await (async () => {
+        `这是最近${times.length === 2 ? `${times[0]}分钟到${times[1]}分钟` : `${times[0]}分钟`}的群聊记录<群聊记录>${await (async () => {
           const now = new Date();
 
           // 解析时间范围
           let startTime: Date, endTime: Date;
-          const times = min.split(',').map(t => parseInt(t));
 
           if(times.length === 2) {
             // 如果是两个数字，过滤a到b分钟的内容
@@ -957,7 +957,7 @@ export class MemoryTableService extends Service {
           }
           const formattedContent = await formatMessagesWithNames.call(this,messages, session,withTime??false);
           return formattedContent;
-        })()}</最近的群聊记录>`
+        })()}</群聊记录>`
       ].join('')
 
       // 将长文本拆分成不超过4000字的片段
