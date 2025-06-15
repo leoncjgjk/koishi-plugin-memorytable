@@ -57,7 +57,10 @@ const {
 
 ## 更新日志
 <li><strong>v1.4.4</strong>\n
-- 伪人指令增加id转昵称
+- 伪人指令增加id转昵称\n
+- 优化trait生成的提示词模板，以及id转昵称\n
+- 修复群聊原始记录保存上限错误的问题\n
+- 增加一些工具函数，吃瓜2指令调用时可传入时间,并且智能判断是否在聊天记录内添加id\n
 </li>
 <details>
 <summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
@@ -152,12 +155,20 @@ mem.restore</code></pre>
 <li><strong>群聊总结1:</strong>
 <pre><code>吃瓜 [prompt]
 群聊总结 [prompt]</code></pre>
-娱乐功能：总结最近群里在说什么，可写参数作为prompt，以要求AI进行针对性回答，例如："吃瓜 刚才有几个人复读了？"、"吃瓜 刚才都是谁在吵架？谁起的头？"。
+娱乐功能：总结最近群里在说什么。\n
+[prompt]可选参数作为prompt，以要求AI进行针对性回答，例如："吃瓜 刚才有几个人复读了？"、"吃瓜 刚才都是谁在吵架？谁起的头？"。
 </li>
 <li><strong>群聊总结2:</strong>
-<pre><code>吃瓜2 [总结时间] [prompt] [userid]
-群聊总结2 [总结时间] [prompt] [userid]</code></pre>
-娱乐功能：总结最近群里在说什么，可写参数要求总结最近x分钟的内容，默认为10分钟。可写参数作为prompt。可写参数userid，只过滤对应用户的聊天消息，多个id用逗号隔开。例如："吃瓜2 120 刚才都有谁在复读刷屏？"，"吃瓜2 120 你认为刚才这两个人谁说的对？ id1,id2"
+<pre><code>吃瓜2 [总结时间] [prompt] [聊天记录附带时间戳] [userid]
+群聊总结2 [总结时间] [prompt] [聊天记录附带时间戳] [userid]</code></pre>
+娱乐功能：总结最近群里在说什么。\n
+[总结时间]可选参数，要求总结最近x分钟的内容，默认为10分钟。\n
+[prompt]可选参数作为prompt，以要求AI进行针对性回答。\n
+[聊天记录附带时间戳]可选参数，是否在聊天记录中附带时间戳，默认为false。\n
+[userid]可选参数，只过滤对应用户的聊天消息，多个id用逗号隔开。\n
+示例：例如："吃瓜2 120 刚才都有谁在复读刷屏？"\n
+"吃瓜2 120 你认为刚才这两个人谁说的对？false id1,id2"\n
+"吃瓜2 120 2~3点有谁在说话？true"\n
 </li>
 </ul>
 </details>
@@ -859,7 +870,7 @@ export class MemoryTableService extends Service {
             if (messages.length < 10) {
               messages = memoryEntry.history.slice(-10);
             }
-            const formattedContent = await formatMessagesWithNames.call(this,messages, session);
+            const formattedContent = await formatMessagesWithNames.call(this,messages, session,false,false);
             return formattedContent;
           })()}</最近的群聊记录>`
         ].join('')
@@ -879,10 +890,10 @@ export class MemoryTableService extends Service {
       })
 
       // 群聊总结指令,只用history总结,可自定义总结之前多少分钟的内容
-    ctx.command('mem.summarize2 [min:number] [extraPrompt:string] [userId:string]',{ authority: 2 })
+    ctx.command('mem.summarize2 [min:number] [extraPrompt:string] [withTime:boolean] [userId:string]',{ authority: 2 })
     .alias('群聊总结2','吃瓜2')
     .userFields(['authority'])
-    .action(async ({ session }, min,extraPrompt,userId) => {
+    .action(async ({ session }, min,extraPrompt,withTime,userId) => {
       if(!this.ctx.config.enableSum) {
         this.ctx.logger.warn('群聊总结指令未开启')
         return
@@ -917,6 +928,7 @@ export class MemoryTableService extends Service {
           const now = new Date();
           // 默认获取最近10分钟的记录
           const timeThreshold = new Date(now.getTime() - min * 60 * 1000);
+          // if(this.config.detailLog) this.ctx.logger.info(`吃瓜2指令当前时间为:${now},计算后过滤的时间戳为:${timeThreshold}`)
 
           // 按时间过滤获取消息
           let messages = memoryEntry.history
@@ -926,7 +938,7 @@ export class MemoryTableService extends Service {
           if (messages.length < 10) {
             messages = memoryEntry.history.slice(-10);
           }
-          const formattedContent = await formatMessagesWithNames.call(this,messages, session);
+          const formattedContent = await formatMessagesWithNames.call(this,messages, session,withTime??false);
           return formattedContent;
         })()}</最近的群聊记录>`
       ].join('')
@@ -1360,8 +1372,8 @@ export class MemoryTableService extends Service {
           history: []
         }
       }
-      const maxGroupHistory = Math.min(this.config.maxMessages * 5, groupMemoryEntry.history.length + 1) // 群聊总记录可以适当多一些
-      groupMemoryEntry.history = [...groupMemoryEntry.history, groupMessageEntry].slice(-maxGroupHistory)
+
+      groupMemoryEntry.history = [...groupMemoryEntry.history, groupMessageEntry].slice(-this.config.maxGroupMessages)
       await this.ctx.database.upsert('memory_table', [groupMemoryEntry])
       if(this.config.detailLog) this.ctx.logger.info(`消息已存入群聊 ${groupChatGroupId} 的总记录`)
 
@@ -2183,7 +2195,7 @@ async function handleSetTrait(this: MemoryTableService, session: Session, trait:
 }
 
 // 提取聊天记录时格式化消息记录，替换发送者ID为名称
-async function formatMessagesWithNames(messages: MessageEntry[], session: Session): Promise<string> {
+async function formatMessagesWithNames(messages: MessageEntry[], session: Session, withTime?:boolean ,withId?:boolean): Promise<string> {
   // 收集所有唯一的sender_id和消息中@的用户id
   const uniqueSenderIds = new Set(messages.map(entry => entry.sender_id));
   // 从消息内容中提取@的用户id
@@ -2221,7 +2233,13 @@ async function formatMessagesWithNames(messages: MessageEntry[], session: Sessio
         content = content.replace(match, `@${atUserName}`);
       });
     }
-    return `${name}(${entry.sender_id}): ${content}`;
+    if(!withTime) {
+      if(!withId) return `${name}: ${content}`;
+      else return `${name}(${entry.sender_id}): ${content}`;
+    }else{
+      if(!withId) return `${new Date(entry.timestamp).toLocaleString('zh-CN', { hour12: false })} ${name}: ${content}`;
+      else return `${new Date(entry.timestamp).toLocaleString('zh-CN', { hour12: false })} ${name}(${entry.sender_id}): ${content}`;
+    }
   });
 
   // if(this.config.detailLog) this.ctx.logger.info('formattedMessages:',formattedMessages)
