@@ -451,7 +451,7 @@ export const Config = Schema.intersect([
      .default(true)
      .description('启用文本过滤。过滤指定开头的聊天记录,使之不进入聊天记录。主要用于指令过滤，可能会导致一些正常聊天也过滤掉了，请谨慎填写下面的列表。'),
     filterCommand: Schema.string().experimental()
-     .default('mem, 好感度, 好感排, 差评排, 查看记忆, 记忆备份, 记忆恢复, 群聊总结, 吃瓜 ,吃瓜2')
+     .default('mem, 好感度, 好感排, 差评排, 查看记忆, 记忆备份, 记忆恢复, 群聊总结, 吃瓜 ,吃瓜2,鉴定伪人')
      .description('用逗号分隔。从开头匹配，例如填写了123，则1234也一样会被过滤掉。容易误判且有参数的，可以加个空格增加匹配度。'),
   }).description('高级设置')
 ])
@@ -1042,7 +1042,7 @@ export class MemoryTableService extends Service {
       })()
       if (historys == '') return '指定时间段内似乎没有聊天记录'
 
-      let content = `这是最近${times.length === 2 ?
+      const timeRange = `最近${times.length === 2 ?
         `${times[0] >= 60 ?
           `${Math.floor(times[0]/60)}小时${times[0]%60}分钟` :
           `${times[0]}分钟`}到${
@@ -1051,76 +1051,97 @@ export class MemoryTableService extends Service {
           `${times[1]}分钟`}` :
         `${times[0] >= 60 ?
           `${Math.floor(times[0]/60)}小时${times[0]%60}分钟` :
-          `${times[0]}分钟`}`}的群聊记录<群聊记录>${historys}</群聊记录>`
+          `${times[0]}分钟`}`}`
 
-      // 将长文本拆分成不超过4000字的片段
-      const MAX_CHUNK_SIZE = this.ctx.config.maxChunkSize || 4000;
-      let chunks = [];
-      let currentChunk = '';
-      let lines = content.split('\n');
-
-      for (let line of lines) {
-        if ((currentChunk + line).length > MAX_CHUNK_SIZE) {
-          if (currentChunk) {
-            chunks.push(currentChunk);
-          }
-          currentChunk = line;
-        } else {
-          currentChunk += (currentChunk ? '\n' : '') + line;
-        }
-      }
-      if (currentChunk) {
-        chunks.push(currentChunk);
-      }
       let finalSummary = '';
-      try {
-        // 依次处理每个片段
-        for (let i = 0; i < chunks.length + 1; i++) {
+
+      // 将长文本拆分成不超过字数限制的片段
+      const MAX_CHUNK_SIZE = this.ctx.config.sum2ChunkSize || 4000;
+      if(historys.length > MAX_CHUNK_SIZE){
+        let chunks = [];
+        let currentChunk = '';
+        let lines = historys.split('\n');
+        for (let line of lines) {
+          if ((currentChunk + line).length > MAX_CHUNK_SIZE) {
+            if (currentChunk) {
+              chunks.push(currentChunk);
+            }
+            currentChunk = line;
+          } else {
+            currentChunk += (currentChunk ? '\n' : '') + line;
+          }
+        }
+        if (currentChunk) {
+          chunks.push(currentChunk);
+        }
+        try {
+          // 依次处理每个片段
+          for (let i = 0; i < chunks.length + 1; i++) {
+            let message = [
+              { role: 'system', content: extraPrompt }
+            ];
+            if (i > 1 && i === chunks.length) {
+              message.push({
+                role: 'user',
+                content: `你之前已经将${timeRange}的所有聊天记录分段总结完毕，请根据system的要求，最终梳理出一个完整的总结。这是前面的总结：<前面的总结>${finalSummary}</前面的总结>`
+              });
+
+              if(this.config.detailLog) {
+                this.ctx.logger.info(`已经总结完所有${chunks.length}个分段，当前是最后一次合并请求，内容长度为${finalSummary.length}`);
+                this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
+              }
+              finalSummary  = await callOpenAI.call(this, message);
+            }else{
+              if (i > 0) {
+                message.push({
+                  role: 'user',
+                  content: `由于聊天内容过长，一共拆分成${chunks.length}段分别发给你。这是前面${i}段的总结内容：<前面的总结>${finalSummary}</前面的总结>`
+                });
+              }
+
+              message.push({
+                role: 'user',
+                content: `<第${i+1}段聊天记录>${chunks[i]}</第${i+1}段聊天记录>`
+              });
+
+              if(this.config.detailLog) {
+                this.ctx.logger.info(`当前是第${i+1}/${chunks.length}个片段，内容长度为${chunks[i].length}`);
+                this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
+              }
+
+              const chunkResult = await callOpenAI.call(this, message);
+
+              if (i === 0) {
+                finalSummary = chunkResult;
+              } else {
+                finalSummary += "\n\n" + chunkResult;
+              }
+            }
+          }
+            return finalSummary;
+        } catch(e) {
+          this.ctx.logger.error(`群聊总结指令失败: ${e.message}`);
+          return `未完全总结成功，部分结果如下：\n\n${finalSummary}` || '群聊总结指令失败，请查看日志了解详细信息';
+        }
+      }else{
+        try {
           let message = [
             { role: 'system', content: extraPrompt }
           ];
-          if (i === chunks.length) {
-            message.push({
-              role: 'user',
-              content: `你之前已经将所有分段总结完毕，请根据system的要求，最终梳理出一个完整的总结。这是前面的总结：<前面的总结>${finalSummary}</前面的总结>`
-            });
-
-            if(this.config.detailLog) {
-              this.ctx.logger.info(`已经总结完所有${chunks.length}个分段，当前是最后一次合并请求，内容长度为${finalSummary.length}`);
-              this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
-            }
-            finalSummary  = await callOpenAI.call(this, message);
-          }else{
-            if (i > 0) {
-              message.push({
-                role: 'user',
-                content: `由于聊天内容过长，一共拆分成${chunks.length}段分别发给你。这是前面${i}段的总结内容：<前面的总结>${finalSummary}</前面的总结>`
-              });
-            }
-
-            message.push({
-              role: 'user',
-              content: `<第${i+1}段聊天记录>${chunks[i]}</第${i+1}段聊天记录>`
-            });
-
-            if(this.config.detailLog) {
-              this.ctx.logger.info(`当前是第${i+1}/${chunks.length}个片段，内容长度为${chunks[i].length}`);
-              this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
-            }
-
-            const chunkResult = await callOpenAI.call(this, message);
-
-            if (i === 0) {
-              finalSummary = chunkResult;
-            } else {
-              finalSummary += "\n\n" + chunkResult;
-            }
+          message.push({
+            role: 'user',
+            content: `这是${timeRange}的聊天记录：<聊天记录>${historys}</聊天记录>`
+          });
+          if(this.config.detailLog) {
+            this.ctx.logger.info(`未拆分片段，内容长度为${historys.length}`);
+            this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
           }
-        }
+          finalSummary  = await callOpenAI.call(this, message);
           return finalSummary;
-      } catch(e) {
-        this.ctx.logger.error(`群聊总结指令失败: ${e.message}`);
-        return `未完全总结成功，部分结果如下：\n\n${finalSummary}` || '群聊总结指令失败，请查看日志了解详细信息';
+        } catch(e) {
+          this.ctx.logger.error(`群聊总结指令失败: ${e.message}`);
+          return '群聊总结指令失败，请查看日志了解详细信息';
+        }
       }
     })
 
