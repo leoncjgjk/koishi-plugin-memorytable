@@ -6,6 +6,21 @@ let extraKBs = []
 // 扩展Koishi事件系统以支持机器人消息事件
 export const name = 'memorytable'
 export const usage = `
+<style>
+.memorytable {
+  background-color: var(--k-side-bg);
+  padding: 1px 24px;
+  border-radius: 4px;
+  border-left: 4px solid var(--k-color-primary);
+}
+.memorytable_guide {
+  background-color: var(--k-side-bg);
+  padding: 1px 24px;
+  border-radius: 4px;
+  border-left: 4px solid var(--k-color-warning);
+}
+</style>
+
 <div style="border-radius: 10px; border: 1px solid #ddd; padding: 16px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
   <h2 style="margin-top: 0; color: #4a6ee0;">📌 插件说明</h2>
   <p>🤖 本插件可以为聊天机器人提供长期记忆功能，也可以独立使用自带指令（如鉴定伪人、吃瓜）</p>
@@ -44,25 +59,82 @@ const {
   </details>
   <p>🔍 <strong>如有建议和bug</strong>：欢迎前往独奏的GitHub <a href="https://github.com/leoncjgjk/koishi-plugin-memorytable/issues" style="color:#4a6ee0;">反馈</a> 和 <a href="https://github.com/leoncjgjk/koishi-plugin-memorytable/pulls" style="color:#4a6ee0;">提交pr</a></p>
 </div>
-<style>
-.memorytable {
-  background-color: var(--k-side-bg);
-  padding: 1px 24px;
-  border-radius: 4px;
-  border-left: 4px solid var(--k-color-primary);
-}
-</style>
+
+
+<div class="memorytable_guide">
+
+## <span style="color: red;">使用教程（初次使用务必仔细阅读！）</span>
+<details>
+<summary style="color: red;">点击此处————查看使用教程</summary>
+<ul>
+<li>
+  <strong>基础配置说明</strong>\n
+  - <strong>(必须)</strong>API设置: API端点只要是兼容openAI格式的均可，例如 https://api.deepseek.com。\n
+  - 如果此项没配置好，请不要打开本插件，会导致本插件无法正常工作。\n
+</li>
+<li>
+  <strong>如何适配koishi-plugin-oobabooga-testbot插件（以下简称oob插件）</strong>\n
+  - <strong>(必须)</strong>在oob插件中启用设置: 群聊记忆表格 - 接入memoryTable \n
+  - (可选，建议打开) 在oob插件中启用设置: 基础设置 - groupmessage_withId（群聊是否记录用户id）\n
+</li>
+
+<span style="color: red;">如果你是新手，那么完成上面的配置就可以正常使用。\n
+如果你是进阶用户，想了解插件的内容，或者想改配置的话，可以往下看。\n</span>
+<li>
+  <strong>本插件一些功能介绍说明</strong>\n
+  - 与oob机器人相关的功能是特征信息、短期记忆、长期记忆、知识库\n
+  - <strong>特征信息</strong>是记录了每个用户的特征，特征只和用户与机器人之间的对话有关。每个用户在不同群内的特征都是完全独立的。\n
+  - <strong>短期记忆</strong>是最近的群聊内容，附带聊天记录发生的时间，每个群独立记录。\n
+  - <strong>长期记忆</strong>功能暂时还在完善。\n
+  - <strong>知识库</strong>是由用户配置的关键词，如果oob机器人收到消息包含了关键词，则会将后续内容发送给oob机器人。\n
+  - <strong>娱乐功能</strong>中，鉴定伪人和吃瓜2，只依赖最近的群聊记录即可使用，吃瓜1依赖短期记忆。
+</li>
+
+<li>
+  <strong>常用的配置说明</strong>\n
+
+  - 功能1 - <strong>traitMesNumber</strong>: 默认10: 表示每个人和oob机器人对话累积10句时（也就是相当于5次对话），生成一次trait，即机器人对该用户的特征信息。\n
+  - 功能1 - <strong>traitTemplate</strong>：特征模板，可根据你想要机器人记住的事情增加或删除。（注意，如果好感度一项修改了名称，则好感度相关的指令会失效）。\n
+  - 功能1 - <strong>traitCacheNum</strong>: 如果你oob插件开启了真群聊模式或者群内随机回复，则建议将此设置从默认的0改为3，意思代表每次会提取最近4个人的记忆特征信息发送给AI。\n
+  - 功能1 - <strong>botPrompt</strong>: 建议填写本人设信息，和你的oob插件的人设保持一致，这样可以使本插件生成的相关记忆更加符合人设。如果留空则代表是完全中立客观的第三方视角。\n
+  - 功能1 - <strong>botPrompts</strong>: 如果你在不同群聊和私聊启用不同的人设，则需要自己填写本项。优先级高于botPrompt，作用相同。没填写的会使用botPrompt。\n
+    ==================\n
+
+  - 功能2 - <strong>memoryStMessages</strong>: 默认30。每30句群聊，生成一次群聊的总结，作为短期记忆。不建议修改此数值，或者多尝试观察后再微调。\n
+  - 功能2 - <strong>memoryStMesNumUsed</strong>: 默认5。表示最近5条短期记忆会发送给oob机器人，并且生成新的短期记忆的时候，会参考最近5条短期记忆，保证短期记忆连贯。建议数值在2~5之间。\n
+    ==================\n
+  - 功能3 - <strong>长期记忆</strong>相关的设置不建议修改，只需要按需启用或关闭即可。目前版本不推荐开启，如果开启请认真写长期记忆使用的提示词，否则效果可能会很差。\n
+    ==================\n
+  - 功能4 - <strong>knowledgeBooks</strong>: 类似酒馆的世界书，当oob插件收到聊天消息能检索到填写的关键词时，自动将后续内容发送给AI。\n
+  - 功能4 - <strong>enableExtraKB</strong>: 从本地文件中读取知识书，会和插件中配置的一起生效。通常不需要开启，只使用上面那个配置的知识书即可。\n
+  - 功能4 - <strong>KBMaxNum</strong>: 默认5。如果一次消息有多个关键词匹配成功，则只会发送前5条匹配成功的给oob机器人。\n
+    ==================\n
+  - 功能5 - <strong>娱乐指令</strong>相关的设置不建议修改，只需要按需启用或关闭即可。使用方法可参考下面的常用指令说明。\n
+    ==================\n
+  - 高级设置 - <strong>detailLog</strong>: 默认关闭。如果想调整一些设置，建议开始并观察是否正常工作，但会导致本地log文件大幅增加。\n
+  - 高级设置 - <strong>enableFilterCommand</strong>: 如果经常使用指令，导致污染了聊天记录，可以开启此功能，并配置关键词来过滤。\n
+  - 高级设置 - <strong>filterCommand</strong>：配合上面这个开关。如果聊天消息开头是填在这里的词，则会被过滤掉，不会进入到聊天记录中。\n
+    ==================\n
+  - 其他未提到的设置不建议新手修改，修改时请认真阅读设置说明，做好备份预案，小心尝试。\n
+</li>
+</ul>
+</details>
+\n
+</div>
+
 
 <div class="memorytable">
 
 ## 更新日志
-<li><strong>v1.4.5</strong>\n
+<li><strong>v1.4.6</strong>\n
 - 伪人指令增加id转昵称\n
 - 优化trait生成的提示词模板，以及id转昵称\n
 - 修复群聊原始记录保存上限错误的问题\n
 - 增加一些工具函数，吃瓜2指令调用时可传入时间,并且智能判断是否在聊天记录内添加id\n
 - hotfix伪人指令消息类型错误\n
 - 吃瓜2指令时间参数改为字符串，支持a和a,b格式，过滤0~a分钟或a到b分钟的内容\n
+- 优化吃瓜2指令逻辑，优化内置指令的prompt\n
+- 增加新手教程配置说明\n
 </li>
 <details>
 <summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
@@ -216,15 +288,15 @@ export interface Config {
 
 export const Config = Schema.intersect([
   Schema.object({
-    apiEndpoint: Schema.string()
+    apiEndpoint: Schema.string().required()
       .default('https://api.openai.com/v1/chat/completions')
-      .description('OpenAI兼容API的端点URL'),
+      .description('OpenAI兼容API的端点URL。可兼容绝大多数API，包括本地AI。'),
     apiKey: Schema.string()
       .role('secret')
-      .description('OpenAI API密钥'),
-    model: Schema.string()
+      .description('API密钥(本地模型或部分中转端口可能不需要，按需填写即可)'),
+    model: Schema.string().required()
       .default('gpt-3.5-turbo')
-      .description('使用的模型名称')
+      .description('模型名称')
   }).description('API设置'),
   Schema.object({
     maxMessages: Schema.number()
@@ -918,7 +990,7 @@ export class MemoryTableService extends Service {
         }
       }
       if(!extraPrompt){
-        extraPrompt = `请根据群聊记录，说一下这个时间段内群里面在聊些什么。回复时不要用"最近x分钟、xx分钟到xx分钟"这种描述方式，请合理的转化为"x个小时前/x分钟前、最近x~x小时"等这种更加符合人类叙述习惯的方式。`
+        extraPrompt = `请根据群聊记录，说一下这个时间段内群里面在聊些什么。`
       }
       const botprompt = await getBotPrompt.call(this,session,memoryEntry.group_id)
       if(this.config.sumUseBotPrompt && botprompt !== '')
@@ -926,39 +998,58 @@ export class MemoryTableService extends Service {
 
       if(!min) min = "10";
       const times = min.split(',').map(t => parseInt(t));
-      let content = [
-        `这是最近${times.length === 2 ? `${times[0]}分钟到${times[1]}分钟` : `${times[0]}分钟`}的群聊记录<群聊记录>${await (async () => {
-          const now = new Date();
+      const historys = await (async () => {
+        const now = new Date();
 
-          // 解析时间范围
-          let startTime: Date, endTime: Date;
+        // 解析时间范围
+        let startTime: Date, endTime: Date;
 
-          if(times.length === 2) {
-            // 如果是两个数字，过滤a到b分钟的内容
-            startTime = new Date(now.getTime() - times[1] * 60 * 1000);
-            endTime = new Date(now.getTime() - times[0] * 60 * 1000);
-          } else {
-            // 如果是一个数字，过滤最近x分钟的内容
-            startTime = new Date(now.getTime() - times[0] * 60 * 1000);
-            endTime = now;
-          }
+        if(times.length === 2) {
+          // 如果是两个数字，过滤a到b分钟的内容
+          startTime = new Date(now.getTime() - times[1] * 60 * 1000);
+          endTime = new Date(now.getTime() - times[0] * 60 * 1000);
+        } else {
+          // 如果是一个数字，过滤最近x分钟的内容
+          startTime = new Date(now.getTime() - times[0] * 60 * 1000);
+          endTime = now;
+        }
 
-          // 按时间范围过滤获取消息
-          let messages = memoryEntry.history
-            .filter(entry => {
-              const timestamp = new Date(entry.timestamp);
-              return timestamp >= startTime && timestamp <= endTime;
-            });
+        // 按时间范围过滤获取消息
+        let messages = memoryEntry.history
+          .filter(entry => {
+            const timestamp = new Date(entry.timestamp);
+            return timestamp >= startTime && timestamp <= endTime;
+          });
 
-          if(this.config.detailLog) this.ctx.logger.info(`吃瓜2过滤时间后聊天记录数量为:${messages.length}`)
-          // 如果时间段内消息太少，则取最后10条
-          if (messages.length < 10) {
-            messages = memoryEntry.history.slice(-10);
-          }
-          const formattedContent = await formatMessagesWithNames.call(this,messages, session,withTime??false);
-          return formattedContent;
-        })()}</群聊记录>`
-      ].join('')
+        if(this.config.detailLog) this.ctx.logger.info(`吃瓜2初步过滤时间后聊天记录数量为:${messages.length}`)
+        // 在默认指令时，如果条数不足则取最后10条
+        if (min == '10' && messages.length < 10){
+          messages = memoryEntry.history.slice(-10);
+          const earliestTime = new Date(messages[0].timestamp.toLocaleString('zh-CN', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })).getTime();
+          const now = new Date().getTime();
+          times[0] = Math.floor((now - earliestTime) / (1000 * 60));
+          if(this.config.detailLog) this.ctx.logger.info(`吃瓜2最终确认时间范围为距今${times[0]}分钟的聊天记录，共${messages.length}条`)
+        }
+
+        if (messages.length < 1) {
+          if(this.config.detailLog) this.ctx.logger.info ('吃瓜2最终确认聊天记录数量为：0')
+          return ''
+        }
+        const formattedContent = await formatMessagesWithNames.call(this,messages, session,withTime??false);
+        return formattedContent;
+      })()
+      if (historys == '') return '指定时间段内似乎没有聊天记录'
+
+      let content = `这是最近${times.length === 2 ?
+        `${times[0] >= 60 ?
+          `${Math.floor(times[0]/60)}小时${times[0]%60}分钟` :
+          `${times[0]}分钟`}到${
+          times[1] >= 60 ?
+          `${Math.floor(times[1]/60)}小时${times[1]%60}分钟` :
+          `${times[1]}分钟`}` :
+        `${times[0] >= 60 ?
+          `${Math.floor(times[0]/60)}小时${times[0]%60}分钟` :
+          `${times[0]}分钟`}`}的群聊记录<群聊记录>${historys}</群聊记录>`
 
       // 将长文本拆分成不超过4000字的片段
       const MAX_CHUNK_SIZE = this.ctx.config.maxChunkSize || 4000;
