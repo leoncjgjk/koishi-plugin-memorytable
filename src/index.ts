@@ -126,7 +126,7 @@ const {
 <div class="memorytable">
 
 ## 更新日志
-<li><strong>v1.4.6</strong>\n
+<li><strong>v1.4.7</strong>\n
 - 伪人指令增加id转昵称\n
 - 优化trait生成的提示词模板，以及id转昵称\n
 - 修复群聊原始记录保存上限错误的问题\n
@@ -135,6 +135,7 @@ const {
 - 吃瓜2指令时间参数改为字符串，支持a和a,b格式，过滤0~a分钟或a到b分钟的内容\n
 - 优化吃瓜2指令逻辑，优化内置指令的prompt\n
 - 增加新手教程配置说明\n
+- hotfix吃瓜2指令兼容AI的两种理解，优化指令和处理方式\n
 </li>
 <details>
 <summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
@@ -196,10 +197,11 @@ const {
 ## 常用指令
 - 好感度
 - 好感排名/差评排名
-- 查看记忆
-- 记忆备份/记忆恢复
-- 伪人鉴定
-- 吃瓜/吃瓜2
+- 查看记忆（权限2）
+- 记忆备份/记忆恢复（权限2）
+- 伪人鉴定（权限2）
+- 吃瓜/吃瓜2（权限2）
+（注意，部分指令默认为权限2，请根据需求自行在koishi中修改配置。）
 
 <details>
 <summary style="color: #4a6ee0;">点击此处————查看指令参数说明</summary>
@@ -432,7 +434,7 @@ export const Config = Schema.intersect([
       .default(true)
       .description('群聊总结指令时，是否使用机器人人设（botPrompt）。'),
     sum2ChunkSize: Schema.number()
-      .default(4000)
+      .default(8000)
       .description('群聊总结2指令，切片的字数（不要超过模型上下文，还有空出来一些字数给prompt和人设）'),
   }).description('功能5：娱乐指令'),
   Schema.object({
@@ -1070,36 +1072,55 @@ export class MemoryTableService extends Service {
       if (currentChunk) {
         chunks.push(currentChunk);
       }
-
+      let finalSummary = '';
       try {
-        let finalSummary = '';
         // 依次处理每个片段
-        for (let i = 0; i < chunks.length; i++) {
+        for (let i = 0; i < chunks.length + 1; i++) {
           let message = [
             { role: 'system', content: extraPrompt }
           ];
-
-          // 如果不是第一个片段，将前一个总结加入提示
-          if (i > 0) {
+          if (i === chunks.length) {
             message.push({
-              role: 'assistant',
-              content: `前面内容的总结：${finalSummary}`
+              role: 'user',
+              content: `你之前已经将所有分段总结完毕，请根据system的要求，最终梳理出一个完整的总结。这是前面的总结：<前面的总结>${finalSummary}</前面的总结>`
             });
+
+            if(this.config.detailLog) {
+              this.ctx.logger.info(`已经总结完所有${chunks.length}个分段，当前是最后一次合并请求，内容长度为${finalSummary.length}`);
+              this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
+            }
+            finalSummary  = await callOpenAI.call(this, message);
+          }else{
+            if (i > 0) {
+              message.push({
+                role: 'user',
+                content: `由于聊天内容过长，一共拆分成${chunks.length}段分别发给你。这是前面${i}段的总结内容：<前面的总结>${finalSummary}</前面的总结>`
+              });
+            }
+
+            message.push({
+              role: 'user',
+              content: `<第${i+1}段聊天记录>${chunks[i]}</第${i+1}段聊天记录>`
+            });
+
+            if(this.config.detailLog) {
+              this.ctx.logger.info(`当前是第${i+1}/${chunks.length}个片段，内容长度为${chunks[i].length}`);
+              this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
+            }
+
+            const chunkResult = await callOpenAI.call(this, message);
+
+            if (i === 0) {
+              finalSummary = chunkResult;
+            } else {
+              finalSummary += "\n\n" + chunkResult;
+            }
           }
-
-          message.push({
-            role: 'user',
-            content: chunks[i]
-          });
-          if(this.config.detailLog) this.ctx.logger.info(`当前是第${i+1}/${chunks.length}个片段，内容长度为${chunks[i].length}，当前请求mes为${JSON.stringify(message)}`)
-          const chunkResult = await callOpenAI.call(this, message);
-          finalSummary = chunkResult;
         }
-
-        return finalSummary;
+          return finalSummary;
       } catch(e) {
         this.ctx.logger.error(`群聊总结指令失败: ${e.message}`);
-        return '群聊总结指令失败，请查看日志了解详细信息';
+        return `未完全总结成功，部分结果如下：\n\n${finalSummary}` || '群聊总结指令失败，请查看日志了解详细信息';
       }
     })
 
