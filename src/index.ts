@@ -126,6 +126,12 @@ const {
 <div class="memorytable">
 
 ## 更新日志
+<li><strong>v1.4.8</strong>\n
+- 优化了好感度指令的提示,现在会告诉调用者还差几句对话\n
+</li>
+<details>
+<summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
+<ul>
 <li><strong>v1.4.7</strong>\n
 - 伪人指令增加id转昵称\n
 - 优化trait生成的提示词模板，以及id转昵称\n
@@ -137,9 +143,6 @@ const {
 - 增加新手教程配置说明\n
 - hotfix吃瓜2指令兼容AI的两种理解，优化指令和处理方式\n
 </li>
-<details>
-<summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
-<ul>
 <li><strong>v1.4.3</strong>\n
 - 增加特征功能私聊的开关，娱乐功能的开关和一些参数设置\n
 - 修复有人退群后查看好感排行榜报错的问题\n
@@ -271,6 +274,7 @@ export interface Config {
   traitMesNumberFT?: number
   traitMesNumber?: number
   traitTemplate?: Record<string, string>
+  // likeParam?:Record<number,number>
   traitCacheNum?: number
   botMesReport?: boolean
   debugMode?: boolean
@@ -319,6 +323,12 @@ export const Config = Schema.intersect([
         '好感度': '用-100到100的数字表示机器人对用户的好感度',
         '事件':'总结一下机器人和用户之间发生过的印象深刻的事情，不超过50个字'
       }),
+    // likeParam: Schema.array(Schema.object({
+    //   likeValue:Schema.number().required().description('好感度阈值'),
+    //   changeValue:Schema.number().required().description('修正值')
+    // }))
+    //   .default([{likeValue:90,changeValue:-5},{likeValue:-25,changeValue:10},{likeValue:-55,changeValue:20}])
+    //   .description('当好感度>=配置的阈值时，每天0点自动修正好感度。阈值配置为负时，则是<=配置值时生效。修正时不会跨越触发时的阈值。'),
     traitCacheNum: Schema.number()
       .default(0)
       .description('特征缓存条数(额外发送最近几个人的特征信息。默认为0，代表只发送当前消息对象的特征信息。)'),
@@ -678,24 +688,22 @@ export class MemoryTableService extends Service {
           user_id: userId
 			}).then(entries => entries[0])
 
-			if (!memoryEntry || !memoryEntry.trait) {
-				return `<at id="${userId}"/> 我们还不熟呢~`
+			if (!memoryEntry || !memoryEntry.trait && !memoryEntry.history) {
+				return `<at id="${userId}"/> 我们还不熟呢~要先和我聊一聊才会有好感度评价哦~`
 			}
 
+      if (memoryEntry.history?.length != 0) {
+        const needTalks = Math.ceil((this.config.traitMesNumber - memoryEntry.history?.length)/2)
+        return `<at id="${userId}"/> 我们还不熟呢~还需要再聊${needTalks}句我才能对你评价哦~`
+      }
 			// 查找所有包含"好感"的特征键
 			const likeKeys = Object.keys(memoryEntry.trait).filter(key => key.includes('好感'))
-			if (likeKeys.length === 0) {
-				return `<at id="${userId}"/> 我们还不熟呢~`
-			}
-
+      if (likeKeys.length != 0) {
 			// 使用第一个找到的好感值
 			const likeKey = likeKeys[0]
-			const likeValue = Number(memoryEntry.trait[likeKey])
-			if (isNaN(likeValue)) {
-				return `<at id="${userId}"/> 好感度为:${likeValue}`
-			}
-
-			return `<at id="${userId}"/> 当前好感度：${likeValue}`
+      const likeValue = Number(memoryEntry.trait[likeKey]) || 0;
+      return `<at id="${userId}"/> 当前好感度：${likeValue}`;
+    }
 		})
 
     ctx.command('mem.dislikeRank [maxnumber:number] [groupid:number]')
@@ -2224,7 +2232,6 @@ async function getLikeRankings(memoryEntries) {
           }
         })
 }
-
 
 // 从文件中提取知识库
 async function extractKBsFromFile(config,ctx): Promise<Array<{ keyword: string, content: string }>> {

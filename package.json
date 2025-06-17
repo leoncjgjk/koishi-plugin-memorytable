@@ -1,6 +1,6 @@
 {
   "name": "koishi-plugin-memorytable",
-  "version": "1.4.7",
+  "version": "1.4.8",
   "description": "为其他bot插件提供记忆表格功能。也可独立运行一些指令，如群聊总结等。",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
