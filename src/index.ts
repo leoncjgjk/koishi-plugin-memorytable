@@ -22,7 +22,7 @@ export const usage = `
 </style>
 
 <div style="border-radius: 10px; border: 1px solid #ddd; padding: 16px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-  <h2 style="margin-top: 0; color: #4a6ee0;">📌 插件说明</h2>
+  <h2 style="margin-top: 0; color: #4a6ee0;">📌 插件说明 v1.4.9</h2>
   <p>🤖 本插件可以为聊天机器人提供长期记忆功能，也可以独立使用自带指令（如鉴定伪人、吃瓜）</p>
   <p>✅ 已适配聊天机器人: koishi-plugin-oobabooga-testbot</p>
   <p>💡 其他机器人插件可添加memorytable为依赖后，通过 getMem 函数来调用</p>
@@ -126,8 +126,9 @@ const {
 <div class="memorytable">
 
 ## 更新日志
-<li><strong>v1.4.8</strong>\n
+<li><strong>v1.4.9</strong>\n
 - 优化了好感度指令的提示,现在会告诉调用者还差几句对话\n
+- hotfix 好感度指令条件判断错误\n
 </li>
 <details>
 <summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
@@ -688,14 +689,15 @@ export class MemoryTableService extends Service {
           user_id: userId
 			}).then(entries => entries[0])
 
-			if (!memoryEntry || !memoryEntry.trait && !memoryEntry.history) {
-				return `<at id="${userId}"/> 我们还不熟呢~要先和我聊一聊才会有好感度评价哦~`
+			if (!memoryEntry || !memoryEntry.trait) {
+        if(memoryEntry.history?.length == 0){
+          return `<at id="${userId}"/> 我们还不熟呢~要先和我聊一聊才会有好感度评价哦~`
+        }else{
+          const needTalks = Math.ceil((this.config.traitMesNumber - memoryEntry.history?.length)/2)
+          return `<at id="${userId}"/> 我们还不熟呢~还需要再聊${needTalks}句我才能对你评价哦~`
+        }
 			}
 
-      if (memoryEntry.history?.length != 0) {
-        const needTalks = Math.ceil((this.config.traitMesNumber - memoryEntry.history?.length)/2)
-        return `<at id="${userId}"/> 我们还不熟呢~还需要再聊${needTalks}句我才能对你评价哦~`
-      }
 			// 查找所有包含"好感"的特征键
 			const likeKeys = Object.keys(memoryEntry.trait).filter(key => key.includes('好感'))
       if (likeKeys.length != 0) {
