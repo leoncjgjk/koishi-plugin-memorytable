@@ -867,26 +867,57 @@ export class MemoryTableService extends Service {
 					]))
 				}
 
-				// 添加短期记忆
-				if (memoryEntry.memory_st.length > 0) {
-					responseElements.push(h('message', [
-						h('author', {}, '短期记忆'),
-						h('content', {}, await formatMessagesWithNamesForMemory(session,memoryEntry.memory_st))
-					]))
-				}
+				// // 添加短期记忆
+				// if (memoryEntry.memory_st.length > 0) {
+				// 	responseElements.push(h('message', [
+				// 		h('author', {}, '短期记忆'),
+				// 		h('content', {}, await formatMessagesWithNamesForMemory(session,memoryEntry.memory_st))
+				// 	]))
+				// }
 
-				// 添加长期记忆
-				if (memoryEntry.memory_lt.length > 0) {
-					responseElements.push(h('message', [
-						h('author', {}, '长期记忆'),
-						h('content', {}, await formatMessagesWithNamesForMemory(session,memoryEntry.memory_lt))
-					]))
-				}
+				// // 添加长期记忆
+				// if (memoryEntry.memory_lt.length > 0) {
+				// 	responseElements.push(h('message', [
+				// 		h('author', {}, '长期记忆'),
+				// 		h('content', {}, await formatMessagesWithNamesForMemory(session,memoryEntry.memory_lt))
+				// 	]))
+				// }
 
 				if (responseElements.length === 0) {
 					return '暂无记忆信息'
 				}
 
+				return h('figure', { children: responseElements })
+			})
+
+      ctx.command('mem.mymem')
+      .alias('查看我的记忆')
+      .action(async ({ session }) => {
+        const groupId = String(session.guildId || session.channelId)
+        const userId = String(session.author.id || session.userId)
+
+				const memoryEntry = await this.ctx.database.get('memory_table', {
+					group_id: groupId,
+					user_id: userId
+				}).then(entries => entries[0])
+
+				if (!memoryEntry) {
+					return '暂无记忆信息'
+				}
+				const responseElements = []
+
+				// 添加特征信息
+				if (Object.keys(memoryEntry.trait).length > 0) {
+					responseElements.push(h('message', [
+						h('author', {}, '特征'),
+						h('content', {}, Object.entries(memoryEntry.trait)
+							.map(([key, value]) => `${key}: ${value}`)
+							.join('\n'))
+					]))
+				}
+				if (responseElements.length === 0) {
+					return '暂无记忆信息'
+				}
 				return h('figure', { children: responseElements })
 			})
 
