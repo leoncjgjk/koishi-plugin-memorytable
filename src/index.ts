@@ -22,7 +22,7 @@ export const usage = `
 </style>
 
 <div style="border-radius: 10px; border: 1px solid #ddd; padding: 16px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-  <h2 style="margin-top: 0; color: #4a6ee0;">📌 插件说明 v1.4.10</h2>
+  <h2 style="margin-top: 0; color: #4a6ee0;">📌 插件说明 v1.4.12</h2>
   <p>🤖 本插件可以为聊天机器人提供长期记忆功能，也可以独立使用自带指令（如鉴定伪人、吃瓜）</p>
   <p>✅ 已适配聊天机器人: koishi-plugin-oobabooga-testbot</p>
   <p>💡 其他机器人插件可添加memorytable为依赖后，通过 getMem 函数来调用</p>
@@ -110,11 +110,12 @@ const {
   - 功能4 - <strong>KBMaxNum</strong>: 默认5。如果一次消息有多个关键词匹配成功，则只会发送前5条匹配成功的给oob机器人。\n
     ==================\n
   - 功能5 - <strong>娱乐指令</strong>相关的设置不建议修改，只需要按需启用或关闭即可。使用方法可参考下面的常用指令说明。\n
+      ==================\n
+  - 功能6 - <strong>enableBlockUser</strong>: 开启后，会根据用户和机器人的好感度来判断是否屏蔽用户。有宽松和严格模式，请看具体的选项说明。\n
     ==================\n
   - 高级设置 - <strong>detailLog</strong>: 默认关闭。如果想调整一些设置，建议开始并观察是否正常工作，但会导致本地log文件大幅增加。\n
   - 高级设置 - <strong>enableFilterCommand</strong>: 如果经常使用指令，导致污染了聊天记录，可以开启此功能，并配置关键词来过滤。\n
   - 高级设置 - <strong>filterCommand</strong>：配合上面这个开关。如果聊天消息开头是填在这里的词，则会被过滤掉，不会进入到聊天记录中。\n
-  - 高级设置 - <strong>enableBlockUser</strong>: 开启后，会根据用户和机器人的好感度来判断是否屏蔽用户。有宽松和严格模式，请看具体的选项说明。\n
     ==================\n
   - 其他未提到的设置不建议新手修改，修改时请认真阅读设置说明，做好备份预案，小心尝试。\n
 </li>
@@ -127,10 +128,12 @@ const {
 <div class="memorytable">
 
 ## 更新日志
-<li><strong>v1.4.10</strong>\n
+<li><strong>v1.4.12/strong>\n
 - 自动拉黑功能，根据好感度自动拉黑。（在高级设置启用）\n
 - 也可以用指令手动加入或移出黑名单。\n
 - 可以配置白名单，白名单中的用户不会被自动拉黑（手动拉黑仍然生效）。\n
+- 拉黑时会同时记录此时的trait，可供查证\n
+- 后悔药功能\n
 </li>
 <details>
 <summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
@@ -309,6 +312,8 @@ export interface Config {
   enableBlockUser?: string
   blockUserByLikeValue?: number
   blockUserWhiteList?: string[]
+  blockResetCommand?: string
+  enableBlockResetCommand?: string
 }
 
 export const Config = Schema.intersect([
@@ -467,6 +472,33 @@ export const Config = Schema.intersect([
       .description('群聊总结2指令，切片的字数（不要超过模型上下文，还有空出来一些字数给prompt和人设）'),
   }).description('功能5：娱乐指令'),
   Schema.object({
+    enableBlockUser: Schema.union([
+      Schema.const("off").description('关闭 (黑名单功能不生效)'),
+      Schema.const("manual").description('手动模式 (不检查好感度，只拦截当前黑名单。可使用指令添加。)'),
+      Schema.const("strict").description('严格模式 (达标后立刻拉黑)'),
+      Schema.const("loose1").description('宽松模式1 (连续两轮达标后拉黑)'),
+      Schema.const("loose2").description('宽松模式2 (连续两轮达标,且好感在下降才拉黑)'),
+    ])
+     .default("off")
+     .description('是否启用自动拉黑功能。'),
+    blockUserByLikeValue: Schema.number()
+     .default(-10)
+     .description('自动拉黑所需的好感度阈值。（<=此值）（直接拦截消息，无法和机器人交互）。'),
+    blockUserWhiteList: Schema.array(Schema.string())
+     .default([])
+     .description('白名单。白名单中的用户不会被自动拉黑（手动拉黑仍然生效）。'),
+    enableBlockResetCommand: Schema.union([
+      Schema.const("off").description('不启用'),
+      Schema.const("on").description('启用'),
+      Schema.const("notice").description('启用,并在第一次拉黑时警告对方，告知后悔药指令')
+    ])
+    .default("off")
+    .description('是否启用后悔药功能。'),
+    blockResetCommand: Schema.string()
+     .default('xx，对不起，我错了')
+     .description('后悔药。发送这句话后可把自己移出黑名单，并重置记忆。但仅限1次。')
+  }).description('功能6：自动拉黑'),
+  Schema.object({
     botMesReport: Schema.boolean()
      .default(false)
      .description('是否已开启机器人聊天上报（不知道的开了也没用）'),
@@ -481,21 +513,7 @@ export const Config = Schema.intersect([
      .description('启用文本过滤。过滤指定开头的聊天记录,使之不进入聊天记录。主要用于指令过滤，可能会导致一些正常聊天也过滤掉了，请谨慎填写下面的列表。'),
     filterCommand: Schema.string().experimental()
      .default('mem, 好感度, 好感排, 差评排, 查看记忆, 记忆备份, 记忆恢复, 群聊总结, 吃瓜 ,吃瓜2,鉴定伪人')
-     .description('用逗号分隔。从开头匹配，例如填写了123，则1234也一样会被过滤掉。容易误判且有参数的，可以加个空格增加匹配度。'),
-    enableBlockUser: Schema.union([
-      Schema.const("off").description('关闭'),
-      Schema.const("strict").description('严格模式(达标后立刻拉黑)'),
-      Schema.const("loose1").description('宽松模式1(连续两轮达标后拉黑)'),
-      Schema.const("loose2").description('宽松模式2(连续两轮达标,且好感在下降才拉黑)'),
-    ])
-     .default("off")
-     .description('是否启用自动拉黑功能。'),
-    blockUserByLikeValue: Schema.number()
-     .default(-10)
-     .description('自动拉黑所需的好感度阈值。（<=此值）（直接拦截消息，无法和机器人交互）。'),
-    blockUserWhiteList: Schema.array(Schema.string())
-     .default([])
-     .description('白名单。白名单中的用户不会被自动拉黑（手动拉黑仍然生效）。')
+     .description('用逗号分隔。从开头匹配，例如填写了123，则1234也一样会被过滤掉。容易误判且有参数的，可以加个空格增加匹配度。')
   }).description('高级设置')
 ])
 
@@ -538,6 +556,9 @@ export interface MemoryTableEntry {
 //黑名单表
 export interface BlackListEntry {
   user_id: string
+  could_reset: boolean
+  trait: Record<string, any>
+  allow_pass: boolean
 }
 
 export class MemoryTableService extends Service {
@@ -621,6 +642,9 @@ export class MemoryTableService extends Service {
     // 初始化黑名单表
     ctx.database.extend('black_list', {
       user_id: 'string',
+      could_reset: 'boolean',
+      trait: 'json',
+      allow_pass: 'boolean'
     }, {
       primary: ['user_id'],
       autoInc: false,
@@ -794,7 +818,8 @@ export class MemoryTableService extends Service {
     .userFields(['authority'])
     .action(async ({ session },userId) => {
       const isBlock  = await checkUserBlackListOrLowLikeValue.call(this,session,userId)
-      if(isBlock) return `用户${userId}在黑名单中`
+      const trait = await ctx.database.get('black_list', { user_id: userId }).then(entries => entries[0])
+      if(isBlock) return `用户${userId}在黑名单中${trait?.trait ? `，上次记录的trait为${trait.trait}` : ''}, 后悔药状态为：${trait?.could_reset ? '可用' : '不可用'}。`
       return '用户不在黑名单中'
     })
 
@@ -810,7 +835,7 @@ export class MemoryTableService extends Service {
     .alias('加入黑名单')
     .userFields(['authority'])
     .action(async ({ session },userId) => {
-      await addUserBlackList.call(this,session,userId)
+      await addUserBlackList.call(this,session,userId,false)
       return `已经将用户${userId}加入黑名单`
     })
 
@@ -1322,10 +1347,17 @@ export class MemoryTableService extends Service {
         }
       })
 
+    // //监听机器人消息
+    // ctx.on('send', async (session: Session) => {
+    //   if(!config.botMesReport){
+    //     await this.handleMessageBot(session)
+    //     if(this.config.detailLog) this.ctx.logger.info('send',session)
+    //   }
+    // })
+
     // 主中间件
     ctx.middleware(async (session, next) => {
       ctx.logger.info('收到message.content:', session.content)
-
       if (this.config.listenPromptCommand) {
         for (let command of this.config.listenPromptCommand) {
           if (session.content.startsWith(command.command)) {
@@ -1333,7 +1365,6 @@ export class MemoryTableService extends Service {
           }
         }
       }
-
       if (!config.botMesReport) {
         await this.handleMessage(session)
       } else {
@@ -1344,31 +1375,26 @@ export class MemoryTableService extends Service {
           await this.handleMessage(session)
         }
       }
-
       await this.autoUpdateTrait(
         session.userId,
         session.guildId || session.channelId || '0',
         session
       )
-
-      await next() // 确保继续执行后续中间件
+      await next()
     })
-
-    // //监听机器人消息
-    // ctx.on('send', async (session: Session) => {
-    //   if(!config.botMesReport){
-    //     await this.handleMessageBot(session)
-    //     if(this.config.detailLog) this.ctx.logger.info('send',session)
-    //   }
-    // })
 
     // 前置中间件，用于实现黑名单
     ctx.middleware(async (session, next) => {
       const isBlock  = await checkUserBlackListOrLowLikeValue.call(this,session)
-      if(isBlock) return
+      if(isBlock)
+        {
+          if(this.config.enableBlockResetCommand !="off" && session.content == this.config.blockResetCommand){
+            await resetUserBlackList.call(this,session)
+          }
+          return
+        }
       await next()
     },true /* true 表示这是前置中间件 */)
-
 	}
 
   // 备份记忆表
@@ -2594,11 +2620,20 @@ async function checkUserBlackListOrLowLikeValue(this: MemoryTableService, sessio
   const groupId = session.guildId || session.channelId
   const userId = userid || session.userId || session.author?.id
 
-  const blackList = await this.ctx.database.get('black_list', { user_id: userId });
-  if (blackList?.some(entry => entry.user_id === userId)) {
+  const blackListEntry = await this.ctx.database.get('black_list', { user_id: userId }).then(entries => entries[0])
+  if (blackListEntry) {
+    if(blackListEntry.allow_pass == true){
+      if(this.config.detailLog) this.ctx.logger.info(`用户${userId}在黑名单列表，已经使用后悔药，放行`)
+      return false
+    }
     if(this.config.detailLog) this.ctx.logger.info(`用户${userId}在黑名单列表，已拦截`)
     return true;
   }
+  // 手动模式不检查好感度
+  if(this.config.enableBlockUser === "manual") {
+    return false
+  }
+
   if(this.config.blockUserWhiteList?.includes(userId)) {
     if(this.config.detailLog) this.ctx.logger.info(`用户${userId}在白名单列表，且不在黑名单中，已跳过自动检测流程`)
     return false
@@ -2657,12 +2692,83 @@ async function removeUserBlackList(this: MemoryTableService, session: Session, u
   if(this.config.detailLog) this.ctx.logger.info(`用户${userId}已从黑名单列表移除`)
 }
 
-// 指定id用户加入黑名单
-async function addUserBlackList(this: MemoryTableService, session: Session, userid?: string) {
+// 指定id用户加入黑名单或更新黑名单
+async function addUserBlackList(this: MemoryTableService, session: Session, userid?: string ,could_reset?:boolean) {
+  const groupId = session.guildId || session.channelId
   const userId = userid || session.userId || session.author?.id
-  await this.ctx.database.create('black_list', { user_id: userId });
-  if(this.config.detailLog) this.ctx.logger.info(`用户${userId}已加入黑名单列表`)
+  const couldReset = could_reset ?? true;
+  if(this.config.detailLog) this.ctx.logger.info(`could_reset:${could_reset},couldReset:${couldReset}`)
+
+  try {
+    const memoryEntry = await this.ctx.database.get('memory_table', {
+      group_id: groupId,
+      user_id: userId
+    }).then(entries => entries[0])
+
+    const blockEntry = await this.ctx.database.get('black_list', { user_id: userId }).then(entries => entries[0])
+
+    const trait = memoryEntry?.trait || {}
+
+    if (blockEntry) {
+      await this.ctx.database.set('black_list',
+        { user_id: blockEntry.user_id },
+        { trait, could_reset: false }
+      )
+      if (this.config.detailLog) this.ctx.logger.info(`用户${userId}二进宫，已经彻底拉黑！`)
+    } else {
+      await this.ctx.database.create('black_list', { user_id: userId, trait, could_reset: couldReset })
+      if (this.config.detailLog) this.ctx.logger.info(`用户${userId}已加入黑名单列表，could_reset:${couldReset}`)
+      if (this.config.enableBlockResetCommand == "notice" && couldReset) {
+        session.send(`好感度过低，已被拉黑。发送"${this.config.blockResetCommand}"指令可重置记忆。（仅限1次）`)
+      }
+    }
+  } catch (error) {
+    this.ctx.logger.error(`添加用户${userId}到黑名单时出错:`, error)
+  }
 }
+
+// 指定id用户如果在黑名单中，则将其好感度设置为0，并将could_reset设置为false,allow_pass设置为true
+async function resetUserBlackList(this: MemoryTableService, session: Session, userid?: string) {
+  const userId = userid || session.userId || session.author?.id
+  try {
+    const blackListEntry = await this.ctx.database.get('black_list', { user_id: userId }).then(entries => entries[0])
+    if (!blackListEntry) {
+      if(this.config.detailLog) this.ctx.logger.info(`用户${userId}不在黑名单列表`)
+      return
+    }
+
+    if (blackListEntry.could_reset) {
+      await this.ctx.database.set('black_list',
+        { user_id: blackListEntry.user_id },
+        { could_reset: false,allow_pass: true }
+      )
+        const memoryEntry = await this.ctx.database.get('memory_table', {
+          group_id: session.guildId || session.channelId,
+          user_id: userId,
+        }).then(entries => entries[0])
+
+        const emptyTrait = []
+
+        await this.ctx.database.set('memory_table',
+          {
+            group_id: session.guildId || session.channelId,
+            user_id: userId
+          },
+          {
+            trait: emptyTrait
+          }
+        )
+
+      if (this.config.detailLog) this.ctx.logger.info(`用户${userId}已移出黑名单，并重置trait`)
+        session.send(`用户${userId}已移出黑名单，并重置trait。（仅此1次）`)
+    }else{
+      if(this.config.detailLog) this.ctx.logger.info(`用户${userId}二进宫，好感度重置已失效。`)
+    }
+  } catch (error) {
+    this.ctx.logger.error(`重置用户${userId}黑名单好感度时出错:`, error)
+  }
+}
+
 
 // 导出插件
 export async function apply(ctx: Context, config: Config) {
