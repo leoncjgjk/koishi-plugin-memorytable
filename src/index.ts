@@ -128,7 +128,7 @@ const {
 <div class="memorytable">
 
 ## 更新日志
-<li><strong>v1.4.12/strong>\n
+<li><strong>v1.4.12</strong>\n
 - 自动拉黑功能，根据好感度自动拉黑。（在高级设置启用）\n
 - 也可以用指令手动加入或移出黑名单。\n
 - 可以配置白名单，白名单中的用户不会被自动拉黑（手动拉黑仍然生效）。\n
@@ -818,8 +818,8 @@ export class MemoryTableService extends Service {
     .userFields(['authority'])
     .action(async ({ session },userId) => {
       const isBlock  = await checkUserBlackListOrLowLikeValue.call(this,session,userId)
-      const trait = await ctx.database.get('black_list', { user_id: userId }).then(entries => entries[0])
-      if(isBlock) return `用户${userId}在黑名单中${trait?.trait ? `，上次记录的trait为${trait.trait}` : ''}, 后悔药状态为：${trait?.could_reset ? '可用' : '不可用'}。`
+      const blackListEntry = await ctx.database.get('black_list', { user_id: userId }).then(entries => entries[0])
+      if(isBlock) return `用户${userId}在黑名单中${blackListEntry?.trait ? `，上次记录的trait为${JSON.stringify(blackListEntry.trait)}` : ''}, 后悔药状态为：${blackListEntry?.could_reset ? '可用' : '不可用'}。`
       return '用户不在黑名单中'
     })
 
