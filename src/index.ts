@@ -1215,6 +1215,7 @@ export class MemoryTableService extends Service {
       // 将长文本拆分成不超过字数限制的片段
       const MAX_CHUNK_SIZE = this.ctx.config.sum2ChunkSize || 4000;
       if(historys.length > MAX_CHUNK_SIZE){
+        await session.send(`聊天记录字数为${historys.length}，已自动分段处理，请稍等`)
         let chunks = [];
         let currentChunk = '';
         let lines = historys.split('\n');
@@ -1240,7 +1241,7 @@ export class MemoryTableService extends Service {
             if (i > 1 && i === chunks.length) {
               message.push({
                 role: 'user',
-                content: `你之前已经将${timeRange}的所有聊天记录分段总结完毕，请根据system的要求，最终梳理出一个完整的总结。这是前面的总结：<前面的总结>${finalSummary}</前面的总结>`
+                content: `你之前已经将${timeRange}的所有聊天记录分段总结完毕，请根据system的要求，最终梳理出一个完整的总结，直接回复总结的内容，不要在总结前后加多余的解释说明。这是前面的总结：<前面的总结>${finalSummary}</前面的总结>。`
               });
 
               if(this.config.detailLog) {
