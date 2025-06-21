@@ -2,7 +2,7 @@ import { Context, Schema, Session, Service, h, SchemaService } from 'koishi'
 import * as fs from 'fs'
 import * as path from 'path'
 
-const bb = 'v1.4.13'
+const bb = 'v1.4.14'
 let extraKBs = []
 // 扩展Koishi事件系统以支持机器人消息事件
 export const name = 'memorytable'
@@ -129,15 +129,19 @@ const {
 <div class="memorytable">
 
 ## 更新日志
+<li><strong>v1.4.14</strong>\n
+- 优化吃瓜2的流程和超长文本的prompt，增加提示语\n
+- 优化高级设置，屏蔽两个高风险设置，可配置api超时时间和重试次数\n
+</li>
+<details>
+<summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
+<ul>
 <li><strong>v1.4.13</strong>\n
 - 初次生成特征信息单独的条数配置 (未生效=>已完成)\n
 - 修复好感度指令问题，增加高级设置：可显示特征更新所需聊天条数（实验性）\n
 - 大量优化提示词和设置说明\n
 - 优化trait相关函数session的传递\n
 </li>
-<details>
-<summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
-<ul>
 <li><strong>v1.4.12</strong>\n
 - 自动拉黑功能，根据好感度自动拉黑。（在功能6启用）\n
 - 也可以用指令手动加入或移出黑名单。\n
@@ -287,6 +291,8 @@ export interface Config {
   apiEndpoint?: string
   apiKey?: string
   model?: string
+  apiTimeout?: number
+  apiRetryTimes?: number
   enableMemSt?: boolean
   enableMemStApi?: boolean
   memoryStMessages?: number
@@ -507,15 +513,21 @@ export const Config = Schema.intersect([
      .description('后悔药。发送这句话后可把自己移出黑名单，并重置记忆。但仅限1次。')
   }).description('功能6：自动拉黑'),
   Schema.object({
-    botMesReport: Schema.boolean()
-     .default(false)
-     .description('是否已开启机器人聊天上报（不知道的开了也没用）'),
+    apiTimeout: Schema.number()
+      .default(30)
+      .description('API超时时间（秒）'),
+    apiRetryTimes: Schema.number()
+      .default(3)
+      .description('API重试次数'),
+    // botMesReport: Schema.boolean()
+    //  .default(false)
+    //  .description('是否已开启机器人聊天上报（不知道的开了也没用）'),
     detailLog: Schema.boolean().experimental()
      .default(false)
      .description('是否记录并在koishi控制台显示每一步的日志（关闭后只显示报错。开启可方便观察插件运行情况。）'),
-    debugMode: Schema.boolean()
-     .default(false)
-     .description('是否开启调试模式'),
+    // debugMode: Schema.boolean()
+    //  .default(false)
+    //  .description('是否开启调试模式'),
     enableFilterCommand: Schema.boolean()
      .default(true)
      .description('启用文本过滤。过滤指定开头的聊天记录,使之不进入聊天记录。主要用于指令过滤，可能会导致一些正常聊天也过滤掉了，请谨慎填写下面的列表。'),
@@ -2050,7 +2062,9 @@ export class MemoryTableService extends Service {
 }
 
   // 调用OpenAI API的工具函数
-async function callOpenAI(messages: Array<{ role: string, content: string }>, maxRetries = 3): Promise<any> {
+async function callOpenAI(messages: Array<{ role: string, content: string }>): Promise<any> {
+  const maxRetries = this.config.apiRetryTimes || 3
+  const timeout = this.config.apiTimeout * 1000 || 30000
   let retries = 0;
   while (retries < maxRetries) {
     try {
@@ -2066,7 +2080,7 @@ async function callOpenAI(messages: Array<{ role: string, content: string }>, ma
           messages,
           temperature: 0.7
         }),
-        signal: AbortSignal.timeout(30000) // 30秒超时
+        signal: AbortSignal.timeout(timeout) // 30秒超时
       });
 
       if (!response.ok) {
