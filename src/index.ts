@@ -1194,6 +1194,9 @@ export class MemoryTableService extends Service {
           if(this.config.detailLog) this.ctx.logger.info ('吃瓜2最终确认聊天记录数量为：0')
           return ''
         }
+        if(messages.length>=100){
+          await session.send(`聊天记录较多(${messages.length}条)，正在处理，请稍等`)
+        }
         const formattedContent = await formatMessagesWithNames.call(this,messages, session,withTime??false);
         return formattedContent;
       })()
