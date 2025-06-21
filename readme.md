@@ -14,6 +14,9 @@
 - 支持记忆数据的备份和恢复
 - 一些其他需要利用聊天记录完成的娱乐功能，比如吃瓜和鉴定伪人（笑）
 
+## Repo统计
+  ![Alt](https://repobeats.axiom.co/api/embed/5a14889aedcd0ce2adb84d0a8835899793728350.svg "Repobeats analytics image")
+
 ## 更新记录
 ### v1.4.14
 - 优化吃瓜2的流程和超长文本的prompt，增加提示语
