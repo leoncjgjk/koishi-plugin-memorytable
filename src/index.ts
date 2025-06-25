@@ -1260,8 +1260,8 @@ export class MemoryTableService extends Service {
               });
 
               if(this.config.detailLog) {
-                this.ctx.logger.info(`已经总结完所有${chunks.length}个分段，当前是最后一次合并请求，内容长度为${finalSummary.length}`);
-                this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
+                if(this.config.detailLog) this.ctx.logger.info(`已经总结完所有${chunks.length}个分段，当前是最后一次合并请求，内容长度为${finalSummary.length}`);
+                if(this.config.detailLog) this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
               }
               finalSummary  = await callOpenAI.call(this, message);
             }else{
@@ -1278,8 +1278,8 @@ export class MemoryTableService extends Service {
               });
 
               if(this.config.detailLog) {
-                this.ctx.logger.info(`当前是第${i+1}/${chunks.length}个片段，内容长度为${chunks[i].length}`);
-                this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
+                if(this.config.detailLog) this.ctx.logger.info(`当前是第${i+1}/${chunks.length}个片段，内容长度为${chunks[i].length}`);
+                if(this.config.detailLog) this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
               }
 
               const chunkResult = await callOpenAI.call(this, message);
@@ -1306,8 +1306,8 @@ export class MemoryTableService extends Service {
             content: `这是${timeRange}的聊天记录：<聊天记录>${historys}</聊天记录>`
           });
           if(this.config.detailLog) {
-            this.ctx.logger.info(`未拆分片段，内容长度为${historys.length}`);
-            this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
+            if(this.config.detailLog) this.ctx.logger.info(`未拆分片段，内容长度为${historys.length}`);
+            if(this.config.detailLog) this.ctx.logger.info(`当前请求message: ${JSON.stringify(message)}`);
           }
           finalSummary  = await callOpenAI.call(this, message);
           return finalSummary;
@@ -1425,7 +1425,7 @@ export class MemoryTableService extends Service {
 
     // 主中间件
     ctx.middleware(async (session, next) => {
-      ctx.logger.info('收到message.content:', session.content)
+      if (this.config.detailLog) ctx.logger.info('收到message.content:', session.content)
       if (this.config.listenPromptCommand) {
         for (let command of this.config.listenPromptCommand) {
           if (session.content.startsWith(command.command)) {
