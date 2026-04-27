@@ -18,6 +18,8 @@
   ![Alt](https://repobeats.axiom.co/api/embed/5a14889aedcd0ce2adb84d0a8835899793728350.svg "Repobeats analytics image")
 
 ## 更新记录
+### v1.4.15
+- 增加删除指定群聊记忆的指令
 ### v1.4.14
 - 优化吃瓜2的流程和超长文本的prompt，增加提示语
 - 优化高级设置，屏蔽两个高风险设置，可配置api超时时间和重试次数

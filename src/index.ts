@@ -2,7 +2,7 @@ import { Context, Schema, Session, Service, h, SchemaService } from 'koishi'
 import * as fs from 'fs'
 import * as path from 'path'
 
-const bb = 'v1.4.14'
+const bb = 'v1.4.15'
 let extraKBs = []
 // 扩展Koishi事件系统以支持机器人消息事件
 export const name = 'memorytable'
@@ -129,13 +129,16 @@ const {
 <div class="memorytable">
 
 ## 更新日志
-<li><strong>v1.4.14</strong>\n
-- 优化吃瓜2的流程和超长文本的prompt，增加提示语\n
-- 优化高级设置，屏蔽两个高风险设置，可配置api超时时间和重试次数\n
+<li><strong>v1.4.15</strong>\n
+- 增加删除指定群聊记忆的指令\n
 </li>
 <details>
 <summary style="color: #4a6ee0;">点击此处————查看历史日志</summary>
 <ul>
+<li><strong>v1.4.14</strong>\n
+- 优化吃瓜2的流程和超长文本的prompt，增加提示语\n
+- 优化高级设置，屏蔽两个高风险设置，可配置api超时时间和重试次数\n
+</li>
 <li><strong>v1.4.13</strong>\n
 - 初次生成特征信息单独的条数配置 (未生效=>已完成)\n
 - 修复好感度指令问题，增加高级设置：可显示特征更新所需聊天条数（实验性）\n
@@ -248,6 +251,10 @@ const {
 <pre><code>mem.backup
 mem.restore</code></pre>
 备份/恢复备份，生成在插件目录的backup文件夹中，方便查看当前数据库的完整数据。
+</li>
+<li><strong>删除群聊记忆:</strong>
+<pre><code>删除群聊记忆 [群聊id]</codepre>
+删除指定群聊的所有记忆。
 </li>
 <li><strong>伪人鉴定:</strong>
 <pre><code>鉴定伪人 [条数]</code></pre>
@@ -388,6 +395,12 @@ export const Config = Schema.intersect([
     // })).experimental()
     //   .default([{plugin:'koishi-plugin-oobabooga-testbot',command:'oob.load',filesName:'lib\\characters',promptArgs:'{name} {prompt}'}])
     //   .description('监听其他插件的切换人设指令。此功能优先级低于自己配置的人设，只有上面两个设置中botPrompt没填，且botPrompts匹配不到的时候才会用这个。'),
+    enablePreGeneTrait: Schema.boolean().experimental()
+      .default(true)
+      .description('在查询好感度时，如果没有印象，则根据之前的聊天记录，预生成印象'),
+    preGeneTraitMesNum:Schema.number().experimental()
+      .default(30)
+      .description('预生成印象最多使用最近多少条聊天记录（只会过滤出该用户的聊天记录）'),
     enablePrivateTrait: Schema.boolean().experimental()
       .default(false)
       .description('是否开启私聊trait，关闭后私聊不再生成'),
@@ -856,10 +869,10 @@ export class MemoryTableService extends Service {
       return '用户不在黑名单中'
     })
 
-    ctx.command('mem.removeBlock userId:number',{ authority: 2 })
-    .alias('移出黑名单')
-    .userFields(['authority'])
-    .action(async ({ session },userId) => {
+    ctx.command('mem.removeBlock userId:string',{ authority: 2 })
+      .alias('移出黑名单')
+      .userFields(['authority'])
+      .action(async ({ session },userId) => {
       await removeUserBlackList.call(this,session,userId)
       return `已经将用户${userId}移出黑名单`
     })
@@ -1318,6 +1331,25 @@ export class MemoryTableService extends Service {
       }
     })
 
+    //  删除指定群聊的所有记忆
+    ctx.command('mem.delGroup <groupId:string>',{ authority: 2 })
+      .alias('删除群聊记录')
+			.userFields(['authority'])
+      .action(async ({ session }, groupId) => {
+        if (!groupId) {
+          return '请输入要删除的群聊ID。'
+        }
+        //删除前备份
+        this.backupMem()
+        try {
+          await this.ctx.database.remove('memory_table', { group_id: groupId })
+          if(this.config.detailLog) this.ctx.logger.info(`已删除群聊 ${groupId} 的所有记忆`)
+          return `已成功删除群聊 ${groupId} 的所有记忆。`
+        } catch (error) {
+          this.ctx.logger.error(`删除群聊记忆失败: ${error.message}`)
+          return `删除群聊 ${groupId} 的记忆时出错，请查看日志。`
+        }
+      })
     //  测试指令
     ctx.command('mem.say <content:text>',{ authority: 2 })
 			.userFields(['authority'])
@@ -2299,6 +2331,12 @@ async function generateSummary(session: Session,groupId: string): Promise<string
   }
 }
 
+// 预生成用户特征的工具函数
+async function preGenerateTrait(session){
+  const groupId = session.guildId || session.channelId
+  const userId = session.userId || session.author?.id
+}
+
 // 生成用户特征的工具函数
 async function generateTrait(session:Session,userId?: string, groupId?: string): Promise<Record<string, string>> {
   groupId = groupId || session.guildId || session.channelId
@@ -2330,7 +2368,7 @@ async function generateTrait(session:Session,userId?: string, groupId?: string):
     // 为每个特征项生成内容
     let trait: Record<string, string> = {}
     let roleContent = Object.keys(memoryEntry.trait).length > 0 ?
-    '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。当前已有特征信息，请基于现有特征进行分析。如果没有充分的聊天记录依据，请保持原有特征不变。请按照特征模板进行分析，并以JSON格式返回结果，不需要解释理由。' :
+    '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。当前已有特征信息，请基于现有特征进行分析。如果没有充分的聊天记录依据，请保持原有特征不变。请按照特征模板进行分析，如果旧的特征有特征模板中不存在或不匹配的键值，请以特征模板为准。严格以JSON格式返回结果，不要多余的内容，不要解释理由。' :
     '你是一个记忆分析专家，你的任务是根据用户和机器人的聊天记录分析用户特征。请按照提供的特征模板进行分析，并以JSON格式返回结果，不需要解释理由。'
     if(botprompt!==''){
       roleContent = roleContent + '\n以下是该机器人的人设，请代入此人设的视角进行分析：<机器人人设>' + botprompt + '</机器人人设>'
